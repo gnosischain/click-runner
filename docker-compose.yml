@@ -1,0 +1,17 @@
+services:
+  click-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: click-runner
+    volumes:
+      - ./queries:/app/queries
+    environment:
+      CH_HOST: ${CH_DB_HOST}
+      CH_PORT: ${CH_NATIVE_PORT}
+      CH_USER: ${CH_USER}
+      CH_PASSWORD: ${CH_PASSWORD}
+      CH_DB: ${CH_DB}
+      CH_SECURE: ${CH_SECURE}
+      CH_VERIFY: "False"
+      CH_QUERIES: "queries/create_ember_table.sql,queries/insert_ember_data.sql,queries/optimize_ember_data.sql"

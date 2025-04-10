@@ -1,0 +1,1 @@
+OPTIMIZE TABLE crawlers_data.ember_electricity_data FINAL;
