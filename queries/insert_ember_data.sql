@@ -39,6 +39,6 @@ SELECT
     `YoY absolute change`,
     `YoY % change`
 FROM url(
-    'https://storage.googleapis.com/emb-prod-bkt-publicdata/public-downloads/monthly_full_release_long_format.csv',
+    '{{EMBER_DATA_URL}}',
     'CSV'
 );
