@@ -14,10 +14,113 @@ services:
       CH_DB: ${CH_DB}
       CH_SECURE: ${CH_SECURE}
       CH_VERIFY: "False"
-      CH_QUERIES: "queries/create_ember_table.sql,queries/insert_ember_data.sql,queries/optimize_ember_data.sql"
-
+      
+      # Default ingestor type
+      CH_INGESTOR: ${CH_INGESTOR:-query}
+      
+      # For CSV ingestor (Ember)
+      CH_EMBER_CREATE_TABLE: ${CH_EMBER_CREATE_TABLE:-queries/ember/create_ember_table.sql}
+      CH_EMBER_INSERT: ${CH_EMBER_INSERT:-queries/ember/insert_ember_data.sql}
+      CH_EMBER_OPTIMIZE: ${CH_EMBER_OPTIMIZE:-queries/ember/optimize_ember_data.sql}
+      
+      # Query variables
       CH_QUERY_VAR_EMBER_DATA_URL: ${EMBER_DATA_URL:-}
       CH_QUERY_VAR_S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
       CH_QUERY_VAR_S3_SECRET_KEY: ${S3_SECRET_KEY:-}
       CH_QUERY_VAR_S3_BUCKET: ${S3_BUCKET:-}
       CH_QUERY_VAR_S3_REGION: ${S3_REGION:-}
+      
+  # Example service for Ember data ingestion
+  ember-ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ember-ingestor
+    volumes:
+      - ./queries:/app/queries
+    environment:
+      CH_HOST: ${CH_DB_HOST}
+      CH_PORT: ${CH_NATIVE_PORT}
+      CH_USER: ${CH_USER}
+      CH_PASSWORD: ${CH_PASSWORD}
+      CH_DB: ${CH_DB}
+      CH_SECURE: ${CH_SECURE}
+      CH_VERIFY: "False"
+      
+      # Variables specific to Ember data
+      CH_QUERY_VAR_EMBER_DATA_URL: ${EMBER_DATA_URL:-}
+      CH_QUERY_VAR_S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      CH_QUERY_VAR_S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+      CH_QUERY_VAR_S3_BUCKET: ${S3_BUCKET:-}
+      CH_QUERY_VAR_S3_REGION: ${S3_REGION:-}
+    command: >
+      --ingestor=csv
+      --create-table-sql=queries/ember/create_ember_table.sql
+      --insert-sql=queries/ember/insert_ember_data.sql
+      --optimize-sql=queries/ember/optimize_ember_data.sql
+    
+  # Example service for ProbeLabā data ingestion
+  probelab-agent-semvers-ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: probelab-agent-semvers-ingestor
+    volumes:
+      - ./queries:/app/queries
+    environment:
+      CH_HOST: ${CH_DB_HOST}
+      CH_PORT: ${CH_NATIVE_PORT}
+      CH_USER: ${CH_USER}
+      CH_PASSWORD: ${CH_PASSWORD}
+      CH_DB: ${CH_DB}
+      CH_SECURE: ${CH_SECURE}
+      CH_VERIFY: "False"
+      
+      # S3 credentials
+      CH_QUERY_VAR_S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      CH_QUERY_VAR_S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+      CH_QUERY_VAR_S3_BUCKET: ${S3_BUCKET:-}
+      CH_QUERY_VAR_S3_REGION: ${S3_REGION:-}
+    command: >
+      --ingestor=parquet
+      --create-table-sql=queries/probelab/probelab_agent_semvers_avg_1d.up.sql
+      --s3-path=assets/agent_semvers_avg_1d_data/{{DATE}}.parquet
+      --table-name=crawlers_data.probelab_agent_semvers_avg_1d
+      --mode=all
+
+  probelab-all-ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: probelab-all-ingestor
+    volumes:
+      - ./queries:/app/queries
+    environment:
+      CH_HOST: ${CH_DB_HOST}
+      CH_PORT: ${CH_NATIVE_PORT}
+      CH_USER: ${CH_USER}
+      CH_PASSWORD: ${CH_PASSWORD}
+      CH_DB: ${CH_DB}
+      CH_SECURE: ${CH_SECURE}
+      CH_VERIFY: "False"
+      CH_QUERY_VAR_S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      CH_QUERY_VAR_S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+      CH_QUERY_VAR_S3_BUCKET: ${S3_BUCKET:-prod-use1-gnosis}
+      CH_QUERY_VAR_S3_REGION: ${S3_REGION:-eu-central-1}
+    entrypoint: []
+    command: >
+      /bin/bash -c "
+      python run_queries.py --ingestor=parquet --create-table-sql=queries/probelab/probelab_agent_semvers_avg_1d.up.sql --s3-path=assets/agent_semvers_avg_1d_data/{{DATE}}.parquet --table-name=crawlers_data.probelab_agent_semvers_avg_1d --mode=all && \
+      python run_queries.py --ingestor=parquet --create-table-sql=queries/probelab/probelab_agent_semvers_over_7d.up.sql --s3-path=assets/agent_semvers_over_7d_data/{{DATE}}.parquet --table-name=crawlers_data.probelab_agent_semvers_over_7d --mode=all && \
+      python run_queries.py --ingestor=parquet --create-table-sql=queries/probelab/probelab_agent_types_avg_1d.up.sql --s3-path=assets/agent_types_avg_1d_data/{{DATE}}.parquet --table-name=crawlers_data.probelab_agent_types_avg_1d --mode=all && \
+      python run_queries.py --ingestor=parquet --create-table-sql=queries/probelab/probelab_agent_types_over_7d.up.sql --s3-path=assets/agent_types_over_7d_data/{{DATE}}.parquet --table-name=crawlers_data.probelab_agent_types_over_7d --mode=all && \
+      python run_queries.py --ingestor=parquet --create-table-sql=queries/probelab/probelab_cloud_provider_avg_1d.up.sql --s3-path=assets/cloud_provider_avg_1d_data/{{DATE}}.parquet --table-name=crawlers_data.probelab_cloud_provider_avg_1d --mode=all && \
+      python run_queries.py --ingestor=parquet --create-table-sql=queries/probelab/probelab_cloud_provider_over_7d.up.sql --s3-path=assets/cloud_provider_over_7d_data/{{DATE}}.parquet --table-name=crawlers_data.probelab_cloud_provider_over_7d --mode=all && \
+      python run_queries.py --ingestor=parquet --create-table-sql=queries/probelab/probelab_countries_avg_1d.up.sql --s3-path=assets/countries_avg_1d_data/{{DATE}}.parquet --table-name=crawlers_data.probelab_countries_avg_1d --mode=all && \
+      python run_queries.py --ingestor=parquet --create-table-sql=queries/probelab/probelab_countries_over_7d.up.sql --s3-path=assets/countries_over_7d_data/{{DATE}}.parquet --table-name=crawlers_data.probelab_countries_over_7d --mode=all && \
+      python run_queries.py --ingestor=parquet --create-table-sql=queries/probelab/probelab_discv5_stale_records.up.sql --s3-path=assets/discv5_stale_records_data/{{DATE}}.parquet --table-name=crawlers_data.probelab_discv5_stale_records --mode=all && \
+      python run_queries.py --ingestor=parquet --create-table-sql=queries/probelab/probelab_is_cloud_avg_1d.up.sql --s3-path=assets/is_cloud_avg_1d_data/{{DATE}}.parquet --table-name=crawlers_data.probelab_is_cloud_avg_1d --mode=all && \
+      python run_queries.py --ingestor=parquet --create-table-sql=queries/probelab/probelab_is_cloud_over_7d.up.sql --s3-path=assets/is_cloud_over_7d_data/{{DATE}}.parquet --table-name=crawlers_data.probelab_is_cloud_over_7d --mode=all && \
+      python run_queries.py --ingestor=parquet --create-table-sql=queries/probelab/probelab_protocols_support_over_7d.up.sql --s3-path=assets/protocols_support_over_7d_data/{{DATE}}.parquet --table-name=crawlers_data.probelab_protocols_support_over_7d --mode=all && \
+      python run_queries.py --ingestor=parquet --create-table-sql=queries/probelab/probelab_quic_support_over_7d.up.sql --s3-path=assets/quic_support_over_7d_data/{{DATE}}.parquet --table-name=crawlers_data.probelab_quic_support_over_7d --mode=all
+      "

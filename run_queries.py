@@ -1,15 +1,25 @@
+#!/usr/bin/env python3
 import os
 import sys
 import logging
-import re
-from typing import List, Dict
+import argparse
+from typing import Dict, List, Optional
+from datetime import datetime, timedelta
 
 import clickhouse_connect
 from clickhouse_connect.driver.client import Client
-from clickhouse_connect.driver.exceptions import ClickHouseError
 
-logger = logging.getLogger("clickhouse_queries")
+from ingestors.csv_ingestor import CSVIngestor
+from ingestors.parquet_ingestor import ParquetIngestor
+
+# Setup logging
+logger = logging.getLogger("clickhouse_runner")
 logger.setLevel(logging.INFO)
+ch = logging.StreamHandler(sys.stdout)
+ch.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+ch.setFormatter(formatter)
+logger.addHandler(ch)
 
 def connect_clickhouse(
     host: str,
@@ -64,127 +74,166 @@ def get_query_variables() -> Dict[str, str]:
     
     return query_vars
 
-def replace_variables(sql_content: str, variables: Dict[str, str]) -> str:
-    """
-    Replace {{VARIABLE_NAME}} patterns in SQL with their values from environment variables.
-    """
-    # Use regex to find all {{VARIABLE_NAME}} patterns
-    pattern = r"{{([A-Za-z0-9_]+)}}"
+def create_argparser() -> argparse.ArgumentParser:
+    """Create command line argument parser"""
+    parser = argparse.ArgumentParser(description="ClickHouse query runner with support for different ingestors")
     
-    def replace_match(match):
-        var_name = match.group(1)
-        if var_name in variables:
-            return variables[var_name]
-        else:
-            logger.warning(f"Variable {{{{{{var_name}}}}}} not found in environment variables")
-            return match.group(0)  # Keep original if not found
+    # Connection parameters
+    parser.add_argument("--host", default=os.getenv("CH_HOST", "localhost"), help="ClickHouse host")
+    parser.add_argument("--port", type=int, default=int(os.getenv("CH_PORT", "9000")), help="ClickHouse port")
+    parser.add_argument("--user", default=os.getenv("CH_USER", "default"), help="ClickHouse user")
+    parser.add_argument("--password", default=os.getenv("CH_PASSWORD", ""), help="ClickHouse password")
+    parser.add_argument("--db", default=os.getenv("CH_DB", "default"), help="ClickHouse database")
+    parser.add_argument("--secure", default=os.getenv("CH_SECURE", "False"), help="Use TLS connection")
+    parser.add_argument("--verify", default=os.getenv("CH_VERIFY", "True"), help="Verify TLS certificate")
     
-    # Replace all occurrences
-    processed_sql = re.sub(pattern, replace_match, sql_content)
-    return processed_sql
+    # Ingestor parameters
+    parser.add_argument("--ingestor", choices=["csv", "parquet", "query"], default="query", 
+                        help="Type of ingestor to use")
+    
+    # CSV ingestor parameters
+    parser.add_argument("--create-table-sql", help="Path to SQL file for table creation")
+    parser.add_argument("--insert-sql", help="Path to SQL file for data insertion")
+    parser.add_argument("--optimize-sql", help="Path to SQL file for table optimization")
+    
+    # Parquet ingestor parameters
+    parser.add_argument("--table-name", help="Target table name for Parquet ingestion")
+    parser.add_argument("--s3-path", help="S3 path pattern for Parquet files")
+    parser.add_argument("--mode", choices=["latest", "date", "all"], default="latest",
+                        help="Ingestion mode for Parquet files")
+    parser.add_argument("--date", help="Specific date for 'date' mode (YYYY-MM-DD)")
+    
+    # Generic query parameters
+    parser.add_argument("--queries", help="Comma-separated list of query files to execute")
+    parser.add_argument("--skip-table-creation", action="store_true", help="Skip table creation steps")
+    
+    return parser
 
-def run_queries(client: Client, sql_files: List[str], variables: Dict[str, str]):
-    """
-    Read and execute the given SQL files in order.
-    Splits each file on semicolons (;) to handle multiple statements.
-    Replaces {{VARIABLE_NAME}} with values from environment variables.
-    """
-    for sql_file in sql_files:
-        if not os.path.exists(sql_file):
-            logger.warning(f"SQL file not found: {sql_file}")
-            continue
+def run_csv_ingestor(args, client, query_vars):
+    """Run the CSV ingestor"""
+    create_table_sql = args.create_table_sql
+    insert_sql = args.insert_sql
+    optimize_sql = args.optimize_sql
+    
+    # If paths aren't provided, try to use CH_QUERIES env var
+    if not create_table_sql or not insert_sql:
+        ch_queries = os.getenv("CH_QUERIES", "").split(",")
+        if len(ch_queries) >= 2:
+            create_table_sql = create_table_sql or ch_queries[0].strip()
+            insert_sql = insert_sql or ch_queries[1].strip()
+            if len(ch_queries) >= 3:
+                optimize_sql = optimize_sql or ch_queries[2].strip()
+    
+    if not create_table_sql or not insert_sql:
+        logger.error("Missing required SQL files for CSV ingestor")
+        return False
+    
+    ingestor = CSVIngestor(
+        client=client,
+        variables=query_vars,
+        create_table_sql=create_table_sql,
+        insert_sql=insert_sql,
+        optimize_sql=optimize_sql
+    )
+    
+    return ingestor.ingest(skip_table_creation=args.skip_table_creation)
 
-        logger.info(f"Running queries from {sql_file} ...")
+def run_parquet_ingestor(args, client, query_vars):
+    """Run the Parquet ingestor"""
+    create_table_sql = args.create_table_sql
+    s3_path = args.s3_path
+    table_name = args.table_name
+    mode = args.mode
+    date = args.date
+    
+    # If no create table SQL is provided, try to use CH_QUERIES env var
+    if not create_table_sql:
+        ch_queries = os.getenv("CH_QUERIES", "").split(",")
+        if ch_queries[0].strip():
+            create_table_sql = ch_queries[0].strip()
+    
+    if not create_table_sql or not s3_path or not table_name:
+        logger.error("Missing required parameters for Parquet ingestor")
+        return False
+    
+    ingestor = ParquetIngestor(
+        client=client,
+        variables=query_vars,
+        create_table_sql=create_table_sql,
+        s3_path_pattern=s3_path,
+        table_name=table_name
+    )
+    
+    return ingestor.ingest(
+        skip_table_creation=args.skip_table_creation,
+        date=date,
+        mode=mode
+    )
 
-        with open(sql_file, "r", encoding="utf-8") as f:
-            content = f.read()
-        
-        # Replace variables in the SQL content
-        content = replace_variables(content, variables)
-
-        # Split on semicolons to handle multiple statements
-        statements = [stmt.strip() for stmt in content.split(";") if stmt.strip()]
+def run_query_ingestor(args, client, query_vars):
+    """Run plain SQL queries from files"""
+    from click_runner.ingestors.base import BaseIngestor
+    
+    # Get queries from args or env var
+    queries_str = args.queries or os.getenv("CH_QUERIES", "")
+    if not queries_str:
+        logger.error("No queries specified")
+        return False
+    
+    query_files = [q.strip() for q in queries_str.split(",") if q.strip()]
+    
+    # Create a basic ingestor for executing the queries
+    ingestor = BaseIngestor(client, query_vars)
+    queries = []
+    
+    for file in query_files:
         try:
-            for stmt in statements:
-                client.command(stmt)
-            logger.info(f"Successfully ran all statements in {sql_file}")
-        except ClickHouseError as che:
-            logger.error(f"Error running queries in {sql_file}: {che}")
-            raise
-        except Exception as e:
-            logger.error(f"Unexpected error for {sql_file}: {e}")
-            raise
-
-
-if __name__ == "__main__":
-    """
-    CLI usage:
-      python run_queries.py host=... port=... user=... password=... db=... secure=... verify=... queries=...
+            sql = ingestor.load_sql_file(file)
+            queries.append(sql)
+        except FileNotFoundError:
+            logger.error(f"Query file not found: {file}")
+            return False
     
-    If not provided as CLI args, fallback to env variables:
-      CH_HOST, CH_PORT, CH_USER, CH_PASSWORD, CH_DB, CH_SECURE, CH_VERIFY, CH_QUERIES
+    return ingestor.execute_queries(queries)
+
+def main():
+    """Main entry point"""
+    parser = create_argparser()
+    args = parser.parse_args()
     
-    Query variables:
-      - Define with environment variables starting with CH_QUERY_VAR_
-      - Reference in SQL as {{VARIABLE_NAME}} (without the CH_QUERY_VAR_ prefix)
+    # Convert string booleans to actual booleans
+    secure = args.secure.lower() in ("true", "1", "yes")
+    verify = args.verify.lower() not in ("false", "0", "no")  # default True
     
-    Example: 
-      CH_QUERY_VAR_DATA_URL="https://example.com/data.csv" -> {{DATA_URL}} in SQL
-    """
-    ch = logging.StreamHandler(sys.stdout)
-    ch.setLevel(logging.DEBUG)
-    logger.addHandler(ch)
-
-    args_dict = {}
-    for arg in sys.argv[1:]:
-        if "=" in arg:
-            k, v = arg.split("=", 1)
-            args_dict[k] = v
-
-    host = args_dict.get("host", os.getenv("CH_HOST", "localhost"))
-    port_str = args_dict.get("port", os.getenv("CH_PORT", "9000"))
-    user = args_dict.get("user", os.getenv("CH_USER", "default"))
-    password = args_dict.get("password", os.getenv("CH_PASSWORD", ""))
-    db = args_dict.get("db", os.getenv("CH_DB", "default"))
-    secure_str = args_dict.get("secure", os.getenv("CH_SECURE", "False"))
-    verify_str = args_dict.get("verify", os.getenv("CH_VERIFY", "True"))
-    queries_str = args_dict.get("queries", os.getenv("CH_QUERIES", ""))
-
-    # Convert port
-    try:
-        port = int(port_str)
-    except ValueError:
-        logger.warning(f"Invalid port: '{port_str}'. Defaulting to 9000.")
-        port = 9000
-
-    # Convert booleans
-    secure = secure_str.lower() in ("true", "1", "yes")
-    verify = verify_str.lower() not in ("false", "0", "no")  # default True
-
     # Get variables for SQL queries from environment
     query_variables = get_query_variables()
-
-    # Convert queries list (comma-separated)
-    # If user doesn't specify anything, run all .sql in the "queries" folder as a fallback example
-    if queries_str.strip():
-        sql_files = [p.strip() for p in queries_str.split(",") if p.strip()]
-    else:
-        # By default, gather all .sql in the `queries` folder
-        queries_folder = os.path.join(os.getcwd(), "queries")
-        sql_files = [
-            os.path.join(queries_folder, f)
-            for f in sorted(os.listdir(queries_folder))
-            if f.endswith(".sql")
-        ]
-
+    
+    # Connect to ClickHouse
     client = connect_clickhouse(
-        host=host,
-        port=port,
-        user=user,
-        password=password,
-        database=db,
+        host=args.host,
+        port=args.port,
+        user=args.user,
+        password=args.password,
+        database=args.db,
         secure=secure,
         verify=verify
     )
+    
+    # Run the appropriate ingestor
+    success = False
+    if args.ingestor == "csv":
+        success = run_csv_ingestor(args, client, query_variables)
+    elif args.ingestor == "parquet":
+        success = run_parquet_ingestor(args, client, query_variables)
+    else:  # "query"
+        success = run_query_ingestor(args, client, query_variables)
+    
+    if success:
+        logger.info("All operations completed successfully!")
+        sys.exit(0)
+    else:
+        logger.error("Operation failed")
+        sys.exit(1)
 
-    run_queries(client, sql_files, query_variables)
+if __name__ == "__main__":
+    main()

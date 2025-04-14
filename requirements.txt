@@ -1,1 +1,6 @@
 clickhouse-connect
+boto3
+python-dotenv
+pyarrow
+pandas
+s3fs
