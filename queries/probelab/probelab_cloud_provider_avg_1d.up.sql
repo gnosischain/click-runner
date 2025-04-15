@@ -9,6 +9,6 @@ CREATE TABLE IF NOT EXISTS crawlers_data.probelab_cloud_provider_avg_1d
     `__pct`                             Nullable(Float64),
     `__total`                           Nullable(Float64),
 )
-ENGINE = MergeTree
+ENGINE = ReplacingMergeTree()
 ORDER BY (min_crawl_created_at, agent_version_type, cloud_provider)
 SETTINGS allow_nullable_key = 1;

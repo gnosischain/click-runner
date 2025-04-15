@@ -8,6 +8,6 @@ CREATE TABLE IF NOT EXISTS crawlers_data.probelab_agent_types_over_7d
     `__pct`                             Nullable(Float64),
     `__total`                           Nullable(UInt32),
 )
-ENGINE = MergeTree
+ENGINE = ReplacingMergeTree()
 ORDER BY (min_crawl_created_at, crawl_created_at, agent_version_type)
 SETTINGS allow_nullable_key = 1;

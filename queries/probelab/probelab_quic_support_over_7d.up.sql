@@ -9,6 +9,6 @@ CREATE TABLE IF NOT EXISTS crawlers_data.probelab_quic_support_over_7d
     `__pct`                             Nullable(Float64),
     `__total`                           Nullable(UInt32),
 )
-ENGINE = MergeTree
+ENGINE = ReplacingMergeTree()
 ORDER BY (min_crawl_created_at, agent_version_type, quic_support)
 SETTINGS allow_nullable_key = 1;

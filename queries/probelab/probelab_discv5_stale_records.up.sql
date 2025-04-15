@@ -7,6 +7,6 @@ CREATE TABLE IF NOT EXISTS crawlers_data.probelab_discv5_stale_records
     `count`                             Nullable(Int64),
     `percentage`                        Nullable(Float64)
 )
-ENGINE = MergeTree
+ENGINE = ReplacingMergeTree()
 ORDER BY (crawl_id, crawl_created_at)
 SETTINGS allow_nullable_key = 1;
