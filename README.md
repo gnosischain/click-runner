@@ -28,7 +28,7 @@ A modular toolkit for ClickHouse data ingestion from various sources, particular
 │   ├── __init__.py
 │   ├── base.py                    # Abstract base ingestor
 │   ├── csv_ingestor.py            # CSV ingestion (e.g., Ember data)
-│   └── parquet_ingestor.py        # Parquet ingestion (e.g., ProbeLabā data)
+│   └── parquet_ingestor.py        # Parquet ingestion (e.g., ProbeLab data)
 ├── utils/                         # Utility modules
 │   ├── __init__.py
 │   ├── s3.py                      # S3 utilities
@@ -39,7 +39,7 @@ A modular toolkit for ClickHouse data ingestion from various sources, particular
     │   ├── create_ember_table.sql
     │   ├── insert_ember_data.sql
     │   └── optimize_ember_data.sql
-    └── probelab/                  # ProbeLabā data
+    └── probelab/                  # ProbeLab data
         ├── probelab_agent_semvers_avg_1d.up.sql
         ├── probelab_agent_types_avg_1d.up.sql
         └── ... (other create table queries)
@@ -182,7 +182,7 @@ The `docker-compose.yml` file includes several predefined services:
 
 1. **click-runner**: Generic service that can run in any mode
 2. **ember-ingestor**: Specialized for Ember CSV data
-3. **probelab-agent-semvers-ingestor**: Example for one ProbeLabā Parquet dataset
+3. **probelab-agent-semvers-ingestor**: Example for one ProbeLab Parquet dataset
 
 ## Setting Up Cron Jobs
 
@@ -192,7 +192,7 @@ To run data ingestion as a daily cron job, you can use the provided Docker conta
 # Example crontab entry for daily Ember data update at 2 AM
 0 2 * * * cd /path/to/click-runner && docker-compose run --rm ember-ingestor
 
-# Example crontab entry for daily ProbeLabā data update at 3 AM
+# Example crontab entry for daily ProbeLab data update at 3 AM
 0 3 * * * cd /path/to/click-runner && docker-compose run --rm probelab-agent-semvers-ingestor
 ```
 

@@ -37,6 +37,7 @@ class ParquetIngestor(BaseIngestor):
         self.s3_path_pattern = s3_path_pattern
         self.table_name = table_name
     
+
     def ingest(
         self, 
         skip_table_creation: bool = False,
@@ -54,9 +55,9 @@ class ParquetIngestor(BaseIngestor):
             skip_table_creation: If True, skip the table creation step
             date: Specific date to ingest (format: YYYY-MM-DD)
             mode: Ingestion mode:
-                  - "latest": Only ingest the most recent file
-                  - "date": Ingest file for the specific date
-                  - "all": Ingest all available files
+                - "latest": Only ingest the most recent file
+                - "date": Ingest file for the specific date
+                - "all": Ingest all available files
             
         Returns:
             True if successful, False otherwise
@@ -78,7 +79,10 @@ class ParquetIngestor(BaseIngestor):
             
             if mode == "latest":
                 # Get the latest file from S3
-                prefix = base_s3_path.split("/", 1)[1].rsplit("/", 1)[0]
+                # Extract the directory path without the filename pattern
+                prefix = base_s3_path.rsplit("/", 1)[0]
+                logger.info(f"Looking for latest file with prefix: {prefix}")
+                
                 latest_file = get_latest_file(
                     bucket, prefix, access_key, secret_key, region
                 )
@@ -102,6 +106,8 @@ class ParquetIngestor(BaseIngestor):
             elif mode == "all":
                 # List all files matching the pattern
                 prefix = base_s3_path.rsplit("/", 1)[0]
+                logger.info(f"Looking for all files with prefix: {prefix}")
+                
                 files = list_s3_files(bucket, prefix, access_key, secret_key, region)
                 if not files:
                     logger.error(f"No files found in S3 path: {bucket}/{prefix}")

@@ -24,11 +24,10 @@ services:
       CH_EMBER_OPTIMIZE: ${CH_EMBER_OPTIMIZE:-queries/ember/optimize_ember_data.sql}
       
       # Query variables
-      CH_QUERY_VAR_EMBER_DATA_URL: ${EMBER_DATA_URL:-}
-      CH_QUERY_VAR_S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
-      CH_QUERY_VAR_S3_SECRET_KEY: ${S3_SECRET_KEY:-}
-      CH_QUERY_VAR_S3_BUCKET: ${S3_BUCKET:-}
-      CH_QUERY_VAR_S3_REGION: ${S3_REGION:-}
+      CH_QUERY_VAR_S3_ACCESS_KEY: ${CH_QUERY_VAR_S3_ACCESS_KEY:-}
+      CH_QUERY_VAR_S3_SECRET_KEY: ${CH_QUERY_VAR_S3_SECRET_KEY:-}
+      CH_QUERY_VAR_S3_BUCKET: ${CH_QUERY_VAR_S3_BUCKET:-}
+      CH_QUERY_VAR_S3_REGION: ${CH_QUERY_VAR_S3_REGION:-}
       
   # Example service for Ember data ingestion
   ember-ingestor:
@@ -48,11 +47,10 @@ services:
       CH_VERIFY: "False"
       
       # Variables specific to Ember data
-      CH_QUERY_VAR_EMBER_DATA_URL: ${EMBER_DATA_URL:-}
-      CH_QUERY_VAR_S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
-      CH_QUERY_VAR_S3_SECRET_KEY: ${S3_SECRET_KEY:-}
-      CH_QUERY_VAR_S3_BUCKET: ${S3_BUCKET:-}
-      CH_QUERY_VAR_S3_REGION: ${S3_REGION:-}
+      CH_QUERY_VAR_S3_ACCESS_KEY: ${CH_QUERY_VAR_S3_ACCESS_KEY:-}
+      CH_QUERY_VAR_S3_SECRET_KEY: ${CH_QUERY_VAR_S3_SECRET_KEY:-}
+      CH_QUERY_VAR_S3_BUCKET: ${CH_QUERY_VAR_S3_BUCKET:-}
+      CH_QUERY_VAR_S3_REGION: ${CH_QUERY_VAR_S3_REGION:-}
     command: >
       --ingestor=csv
       --create-table-sql=queries/ember/create_ember_table.sql
@@ -77,10 +75,10 @@ services:
       CH_VERIFY: "False"
       
       # S3 credentials
-      CH_QUERY_VAR_S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
-      CH_QUERY_VAR_S3_SECRET_KEY: ${S3_SECRET_KEY:-}
-      CH_QUERY_VAR_S3_BUCKET: ${S3_BUCKET:-}
-      CH_QUERY_VAR_S3_REGION: ${S3_REGION:-}
+      CH_QUERY_VAR_S3_ACCESS_KEY: ${CH_QUERY_VAR_S3_ACCESS_KEY:-}
+      CH_QUERY_VAR_S3_SECRET_KEY: ${CH_QUERY_VAR_S3_SECRET_KEY:-}
+      CH_QUERY_VAR_S3_BUCKET: ${CH_QUERY_VAR_S3_BUCKET:-}
+      CH_QUERY_VAR_S3_REGION: ${CH_QUERY_VAR_S3_REGION:-}
     command: >
       --ingestor=parquet
       --create-table-sql=queries/probelab/probelab_agent_semvers_avg_1d.up.sql
@@ -103,10 +101,10 @@ services:
       CH_DB: ${CH_DB}
       CH_SECURE: ${CH_SECURE}
       CH_VERIFY: "False"
-      CH_QUERY_VAR_S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
-      CH_QUERY_VAR_S3_SECRET_KEY: ${S3_SECRET_KEY:-}
-      CH_QUERY_VAR_S3_BUCKET: ${S3_BUCKET:-prod-use1-gnosis}
-      CH_QUERY_VAR_S3_REGION: ${S3_REGION:-eu-central-1}
+      CH_QUERY_VAR_S3_ACCESS_KEY: ${CH_QUERY_VAR_S3_ACCESS_KEY:-}
+      CH_QUERY_VAR_S3_SECRET_KEY: ${CH_QUERY_VAR_S3_SECRET_KEY:-}
+      CH_QUERY_VAR_S3_BUCKET: ${CH_QUERY_VAR_S3_BUCKET:-}
+      CH_QUERY_VAR_S3_REGION: ${CH_QUERY_VAR_S3_REGION:-}
     entrypoint: []
     command: >
       /bin/bash -c "
@@ -123,4 +121,29 @@ services:
       python run_queries.py --ingestor=parquet --create-table-sql=queries/probelab/probelab_is_cloud_over_7d.up.sql --s3-path=assets/is_cloud_over_7d_data/{{DATE}}.parquet --table-name=crawlers_data.probelab_is_cloud_over_7d --mode=all && \
       python run_queries.py --ingestor=parquet --create-table-sql=queries/probelab/probelab_protocols_support_over_7d.up.sql --s3-path=assets/protocols_support_over_7d_data/{{DATE}}.parquet --table-name=crawlers_data.probelab_protocols_support_over_7d --mode=all && \
       python run_queries.py --ingestor=parquet --create-table-sql=queries/probelab/probelab_quic_support_over_7d.up.sql --s3-path=assets/quic_support_over_7d_data/{{DATE}}.parquet --table-name=crawlers_data.probelab_quic_support_over_7d --mode=all
+      "
+
+  probelab-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: probelab-test
+    volumes:
+      - ./queries:/app/queries
+    environment:
+      CH_HOST: ${CH_DB_HOST}
+      CH_PORT: ${CH_NATIVE_PORT}
+      CH_USER: ${CH_USER}
+      CH_PASSWORD: ${CH_PASSWORD}
+      CH_DB: ${CH_DB}
+      CH_SECURE: ${CH_SECURE}
+      CH_VERIFY: "False"
+      CH_QUERY_VAR_S3_ACCESS_KEY: ${CH_QUERY_VAR_S3_ACCESS_KEY:-}
+      CH_QUERY_VAR_S3_SECRET_KEY: ${CH_QUERY_VAR_S3_SECRET_KEY:-}
+      CH_QUERY_VAR_S3_BUCKET: ${CH_QUERY_VAR_S3_BUCKET:-}
+      CH_QUERY_VAR_S3_REGION: ${CH_QUERY_VAR_S3_REGION:-}
+    entrypoint: []
+    command: >
+      /bin/bash -c "
+      python run_queries.py --ingestor=parquet --create-table-sql=queries/probelab/probelab_agent_semvers_avg_1d.up.sql --s3-path=assets/agent_semvers_avg_1d_data/{{DATE}}.parquet --table-name=crawlers_data.probelab_agent_semvers_avg_1d --mode=latest
       "

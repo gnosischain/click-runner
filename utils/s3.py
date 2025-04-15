@@ -80,16 +80,22 @@ def get_latest_file(
         Key of the most recent file, or None if no files found
     """
     try:
+        logger.info(f"Listing files in {bucket}/{prefix}")
         files = list_s3_files(bucket, prefix, access_key, secret_key, region)
         
         if not files:
+            logger.warning(f"No files found in S3 path: {bucket}/{prefix}")
             return None
         
         # Filter to only .parquet files
         parquet_files = [f for f in files if f.endswith('.parquet')]
         
         if not parquet_files:
+            logger.warning(f"No .parquet files found in S3 path: {bucket}/{prefix}")
             return None
+        
+        # Log the first few files to help with debugging
+        logger.info(f"Found {len(parquet_files)} parquet files. First few: {parquet_files[:3] if len(parquet_files) > 3 else parquet_files}")
         
         # Try to sort by the date in the filename
         # Assuming format: prefix/YYYY-MM-DD.parquet
@@ -99,10 +105,12 @@ def get_latest_file(
                 return datetime.strptime(date_str, '%Y-%m-%d')
             except (ValueError, IndexError):
                 # If we can't parse the date, use a minimal datetime
+                logger.warning(f"Couldn't parse date from filename: {filename}")
                 return datetime.min
         
         # Sort files by date
         sorted_files = sorted(parquet_files, key=extract_date, reverse=True)
+        logger.info(f"Latest file: {sorted_files[0]}")
         return sorted_files[0]
     
     except Exception as e:
