@@ -1,7 +1,7 @@
 INSERT INTO crawlers_data.ember_electricity_data 
 (
     `Area`,
-    `Country code`,
+    `ISO 3 code`, 
     `Date`,
     `Area type`,
     `Continent`,
@@ -21,7 +21,7 @@ INSERT INTO crawlers_data.ember_electricity_data
 )
 SELECT
     Area,
-    `Country code`,
+    `ISO 3 code`, 
     parseDateTimeBestEffortOrNull(CAST(Date AS String)) AS Date,
     `Area type`,
     Continent,

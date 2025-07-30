@@ -1,7 +1,7 @@
 CREATE TABLE IF NOT EXISTS crawlers_data.ember_electricity_data
 (
     `Area`                String,
-    `Country code`        String,
+    `ISO 3 code`          String, 
     `Date`                Date,
     `Area type`           String,
     `Continent`           String,
