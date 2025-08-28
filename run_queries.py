@@ -11,6 +11,7 @@ from clickhouse_connect.driver.client import Client
 
 from ingestors.csv_ingestor import CSVIngestor
 from ingestors.parquet_ingestor import ParquetIngestor
+from ingestors.gdrive_ingestor import GDriveIngestor
 
 # Setup logging
 logger = logging.getLogger("clickhouse_runner")
@@ -88,8 +89,8 @@ def create_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--verify", default=os.getenv("CH_VERIFY", "True"), help="Verify TLS certificate")
     
     # Ingestor parameters
-    parser.add_argument("--ingestor", choices=["csv", "parquet", "query"], default="query", 
-                        help="Type of ingestor to use")
+    parser.add_argument("--ingestor", choices=["csv", "parquet", "gdrive", "query"], default="query", 
+                       help="Type of ingestor to use")
     
     # CSV ingestor parameters
     parser.add_argument("--create-table-sql", help="Path to SQL file for table creation")
@@ -97,11 +98,15 @@ def create_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--optimize-sql", help="Path to SQL file for table optimization")
     
     # Parquet ingestor parameters
-    parser.add_argument("--table-name", help="Target table name for Parquet ingestion")
+    parser.add_argument("--table-name", help="Target table name for ingestion")
     parser.add_argument("--s3-path", help="S3 path pattern for Parquet files")
     parser.add_argument("--mode", choices=["latest", "date", "all"], default="latest",
-                        help="Ingestion mode for Parquet files")
+                       help="Ingestion mode for Parquet files")
     parser.add_argument("--date", help="Specific date for 'date' mode (YYYY-MM-DD)")
+    
+    # Google Drive ingestor parameters
+    parser.add_argument("--file-id", help="Google Drive file ID for CSV file")
+    parser.add_argument("--max-rows", type=int, default=1000000, help="Maximum number of rows to process (default: 1,000,000)")
     
     # Generic query parameters
     parser.add_argument("--queries", help="Comma-separated list of query files to execute")
@@ -170,9 +175,63 @@ def run_parquet_ingestor(args, client, query_vars):
         mode=mode
     )
 
+def run_gdrive_ingestor(args, client, query_vars):
+    """Run the Google Drive CSV ingestor"""
+    create_table_sql = args.create_table_sql
+    insert_sql = args.insert_sql  # This will be ignored in the simplified approach
+    optimize_sql = args.optimize_sql
+    file_id = args.file_id or os.getenv("CH_GDRIVE_FILE_ID", "")
+    table_name = args.table_name or os.getenv("CH_TABLE_NAME", "")
+    
+    # Handle max_rows with a default value if the attribute doesn't exist
+    max_rows = getattr(args, 'max_rows', 1000000)  # Default to 1,000,000 rows
+    
+    # If paths aren't provided, try to use CH_QUERIES env var
+    if not create_table_sql:
+        ch_queries = os.getenv("CH_QUERIES", "").split(",")
+        if len(ch_queries) >= 1:
+            create_table_sql = create_table_sql or ch_queries[0].strip()
+        if len(ch_queries) >= 3 and not optimize_sql:
+            optimize_sql = ch_queries[2].strip()
+    
+    if not create_table_sql or not file_id:
+        logger.error("Missing required parameters for Google Drive ingestor")
+        logger.error("Required: --create-table-sql, --file-id")
+        return False
+    
+    # If table_name is not provided, try to extract it from create_table_sql
+    if not table_name:
+        try:
+            create_sql = open(create_table_sql, 'r').read()
+            # Extract table name from CREATE TABLE statement
+            import re
+            match = re.search(r'CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(]+)', create_sql, re.IGNORECASE)
+            if match:
+                table_name = match.group(1)
+                logger.info(f"Extracted table name from SQL: {table_name}")
+        except Exception as e:
+            logger.error(f"Error extracting table name from SQL: {e}")
+            return False
+    
+    if not table_name:
+        logger.error("Table name is required. Specify with --table-name or ensure it's in the CREATE TABLE SQL.")
+        return False
+    
+    ingestor = GDriveIngestor(
+        client=client,
+        variables=query_vars,
+        create_table_sql=create_table_sql,
+        file_id=file_id,
+        table_name=table_name,
+        optimize_sql=optimize_sql,
+        max_rows=max_rows
+    )
+    
+    return ingestor.ingest(skip_table_creation=args.skip_table_creation)
+
 def run_query_ingestor(args, client, query_vars):
     """Run plain SQL queries from files"""
-    from click_runner.ingestors.base import BaseIngestor
+    from ingestors.base import BaseIngestor
     
     # Get queries from args or env var
     queries_str = args.queries or os.getenv("CH_QUERIES", "")
@@ -225,6 +284,8 @@ def main():
         success = run_csv_ingestor(args, client, query_variables)
     elif args.ingestor == "parquet":
         success = run_parquet_ingestor(args, client, query_variables)
+    elif args.ingestor == "gdrive":
+        success = run_gdrive_ingestor(args, client, query_variables)
     else:  # "query"
         success = run_query_ingestor(args, client, query_variables)
     

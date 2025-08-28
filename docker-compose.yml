@@ -46,6 +46,8 @@ services:
       CH_SECURE: ${CH_SECURE}
       CH_VERIFY: "False"
       
+      CH_QUERY_VAR_EMBER_DATA_URL: ${EMBER_DATA_URL:-https://example.com/path/to/ember/data.csv}
+
       # Variables specific to Ember data
       CH_QUERY_VAR_S3_ACCESS_KEY: ${CH_QUERY_VAR_S3_ACCESS_KEY:-}
       CH_QUERY_VAR_S3_SECRET_KEY: ${CH_QUERY_VAR_S3_SECRET_KEY:-}
@@ -57,7 +59,7 @@ services:
       --insert-sql=queries/ember/insert_ember_data.sql
       --optimize-sql=queries/ember/optimize_ember_data.sql
     
-  # Example service for ProbeLabā data ingestion
+  # Example service for ProbeLab data ingestion
   probelab-agent-semvers-ingestor:
     build:
       context: .
@@ -123,6 +125,43 @@ services:
       python run_queries.py --ingestor=parquet --create-table-sql=queries/probelab/probelab_quic_support_over_7d.up.sql --s3-path=assets/quic_support_over_7d_data/{{DATE}}.parquet --table-name=crawlers_data.probelab_quic_support_over_7d --mode=all
       "
 
+  probelab-date-ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: probelab-date-ingestor
+    volumes:
+      - ./queries:/app/queries
+    environment:
+      CH_HOST: ${CH_DB_HOST}
+      CH_PORT: ${CH_NATIVE_PORT}
+      CH_USER: ${CH_USER}
+      CH_PASSWORD: ${CH_PASSWORD}
+      CH_DB: ${CH_DB}
+      CH_SECURE: ${CH_SECURE}
+      CH_VERIFY: "False"
+      CH_QUERY_VAR_S3_ACCESS_KEY: ${CH_QUERY_VAR_S3_ACCESS_KEY:-}
+      CH_QUERY_VAR_S3_SECRET_KEY: ${CH_QUERY_VAR_S3_SECRET_KEY:-}
+      CH_QUERY_VAR_S3_BUCKET: ${CH_QUERY_VAR_S3_BUCKET:-}
+      CH_QUERY_VAR_S3_REGION: ${CH_QUERY_VAR_S3_REGION:-}
+    entrypoint: []
+    command: >
+      /bin/bash -c "
+      python run_queries.py --ingestor=parquet --create-table-sql=queries/probelab/probelab_agent_semvers_avg_1d.up.sql --s3-path=assets/agent_semvers_avg_1d_data/{{DATE}}.parquet --table-name=crawlers_data.probelab_agent_semvers_avg_1d --mode=date --date=2025-04-22 && \
+      python run_queries.py --ingestor=parquet --create-table-sql=queries/probelab/probelab_agent_semvers_over_7d.up.sql --s3-path=assets/agent_semvers_over_7d_data/{{DATE}}.parquet --table-name=crawlers_data.probelab_agent_semvers_over_7d --mode=date --date=2025-04-22 && \
+      python run_queries.py --ingestor=parquet --create-table-sql=queries/probelab/probelab_agent_types_avg_1d.up.sql --s3-path=assets/agent_types_avg_1d_data/{{DATE}}.parquet --table-name=crawlers_data.probelab_agent_types_avg_1d --mode=date  --date=2025-04-22 && \
+      python run_queries.py --ingestor=parquet --create-table-sql=queries/probelab/probelab_agent_types_over_7d.up.sql --s3-path=assets/agent_types_over_7d_data/{{DATE}}.parquet --table-name=crawlers_data.probelab_agent_types_over_7d --mode=date --date=2025-04-22 && \
+      python run_queries.py --ingestor=parquet --create-table-sql=queries/probelab/probelab_cloud_provider_avg_1d.up.sql --s3-path=assets/cloud_provider_avg_1d_data/{{DATE}}.parquet --table-name=crawlers_data.probelab_cloud_provider_avg_1d --mode=date --date=2025-04-22 && \
+      python run_queries.py --ingestor=parquet --create-table-sql=queries/probelab/probelab_cloud_provider_over_7d.up.sql --s3-path=assets/cloud_provider_over_7d_data/{{DATE}}.parquet --table-name=crawlers_data.probelab_cloud_provider_over_7d --mode=date --date=2025-04-22 && \
+      python run_queries.py --ingestor=parquet --create-table-sql=queries/probelab/probelab_countries_avg_1d.up.sql --s3-path=assets/countries_avg_1d_data/{{DATE}}.parquet --table-name=crawlers_data.probelab_countries_avg_1d --mode=date --date=2025-04-22 && \
+      python run_queries.py --ingestor=parquet --create-table-sql=queries/probelab/probelab_countries_over_7d.up.sql --s3-path=assets/countries_over_7d_data/{{DATE}}.parquet --table-name=crawlers_data.probelab_countries_over_7d --mode=date --date=2025-04-22 && \
+      python run_queries.py --ingestor=parquet --create-table-sql=queries/probelab/probelab_discv5_stale_records.up.sql --s3-path=assets/discv5_stale_records_data/{{DATE}}.parquet --table-name=crawlers_data.probelab_discv5_stale_records --mode=date --date=2025-04-22 && \
+      python run_queries.py --ingestor=parquet --create-table-sql=queries/probelab/probelab_is_cloud_avg_1d.up.sql --s3-path=assets/is_cloud_avg_1d_data/{{DATE}}.parquet --table-name=crawlers_data.probelab_is_cloud_avg_1d --mode=date --date=2025-04-22 && \
+      python run_queries.py --ingestor=parquet --create-table-sql=queries/probelab/probelab_is_cloud_over_7d.up.sql --s3-path=assets/is_cloud_over_7d_data/{{DATE}}.parquet --table-name=crawlers_data.probelab_is_cloud_over_7d --mode=date --date=2025-04-22 && \
+      python run_queries.py --ingestor=parquet --create-table-sql=queries/probelab/probelab_protocols_support_over_7d.up.sql --s3-path=assets/protocols_support_over_7d_data/{{DATE}}.parquet --table-name=crawlers_data.probelab_protocols_support_over_7d --mode=date --date=2025-04-22 && \
+      python run_queries.py --ingestor=parquet --create-table-sql=queries/probelab/probelab_quic_support_over_7d.up.sql --s3-path=assets/quic_support_over_7d_data/{{DATE}}.parquet --table-name=crawlers_data.probelab_quic_support_over_7d --mode=date --date=2025-04-22
+      "
+
   probelab-test:
     build:
       context: .
@@ -147,3 +186,32 @@ services:
       /bin/bash -c "
       python run_queries.py --ingestor=parquet --create-table-sql=queries/probelab/probelab_agent_semvers_avg_1d.up.sql --s3-path=assets/agent_semvers_avg_1d_data/{{DATE}}.parquet --table-name=crawlers_data.probelab_agent_semvers_avg_1d --mode=latest
       "
+  gpay-wallets-ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gpay-wallets-ingestor
+    volumes:
+      - ./queries:/app/queries
+      - ${GOOGLE_APPLICATION_CREDENTIALS:-~/.config/gcloud/application_default_credentials.json}:/app/credentials.json
+    environment:
+      CH_HOST: ${CH_DB_HOST}
+      CH_PORT: ${CH_NATIVE_PORT}
+      CH_USER: ${CH_USER}
+      CH_PASSWORD: ${CH_PASSWORD}
+      CH_DB: ${CH_DB}
+      CH_SECURE: ${CH_SECURE}
+      CH_VERIFY: "False"
+      
+      # Google Drive specific variables
+      GOOGLE_APPLICATION_CREDENTIALS: /app/credentials.json
+      CH_QUERY_VAR_GOOGLE_APPLICATION_CREDENTIALS: /app/credentials.json
+      CH_GDRIVE_FILE_ID: ${GPAY_WALLETS_FILE_ID:-}
+      CH_TABLE_NAME: crawlers_data.gpay_wallets
+    command: >
+      --ingestor=gdrive
+      --create-table-sql=queries/gpay/create_gpay_wallets_table.sql
+      --optimize-sql=queries/gpay/optimize_gpay_wallets_data.sql
+      --file-id=${GPAY_WALLETS_FILE_ID:-}
+      --table-name=crawlers_data.gpay_wallets
+      --max-rows=1000000

@@ -4,3 +4,7 @@ python-dotenv
 pyarrow
 pandas
 s3fs
+google-api-python-client
+google-auth
+google-auth-oauthlib
+google-auth-httplib2

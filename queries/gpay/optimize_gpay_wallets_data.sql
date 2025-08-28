@@ -1,0 +1,1 @@
+OPTIMIZE TABLE crawlers_data.gpay_wallets FINAL;
