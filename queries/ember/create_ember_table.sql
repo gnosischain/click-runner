@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS crawlers_data.ember_electricity_data
     `Unit`                String,
     `Value`               Float64,
     `YoY absolute change` Float64,
-    `YoY % change`        Float64
+    `YoY % change`        Float64,
+    `version`             DateTime DEFAULT now()
 )
-ENGINE = MergeTree
+ENGINE = ReplacingMergeTree(version)
 ORDER BY (Date, Area, Category, Subcategory, Variable);

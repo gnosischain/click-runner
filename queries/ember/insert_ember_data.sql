@@ -1,4 +1,4 @@
-INSERT INTO crawlers_data.ember_electricity_data 
+INSERT INTO crawlers_data.ember_electricity_data
 (
     `Area`,
     `ISO 3 code`, 
@@ -17,7 +17,8 @@ INSERT INTO crawlers_data.ember_electricity_data
     `Unit`,
     `Value`,
     `YoY absolute change`,
-    `YoY % change`
+    `YoY % change`,
+    `version`
 )
 SELECT
     Area,
@@ -37,7 +38,8 @@ SELECT
     Unit,
     Value,
     `YoY absolute change`,
-    `YoY % change`
+    `YoY % change`,
+    now() AS version 
 FROM url(
     '{{EMBER_DATA_URL}}',
     'CSV'
