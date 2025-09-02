@@ -1,3 +1,4 @@
 .env
 *.ipynb
 credentials_dgrive.json
+.venv
