@@ -216,7 +216,7 @@ services:
       --table-name=crawlers_data.gpay_wallets
       --max-rows=1000000
 
- # --- NEW: Dune prices daily ---
+ # Dune prices daily ---
   dune-prices-daily:
     build:
       context: .
@@ -239,7 +239,7 @@ services:
       --insert-sql=queries/dune/prices/insert_daily.sql
       --skip-table-creation
 
-  # --- NEW: Dune labels daily ---
+  # Dune labels daily ---
   dune-labels-daily:
     build:
       context: .
@@ -262,7 +262,7 @@ services:
       --insert-sql=queries/dune/labels/insert_daily.sql
       --skip-table-creation
 
-  # --- NEW: Dune labels range/backfill (uses helper script) ---
+  # Dune range ingestors (with --start / --end) ---
   dune-labels-range:
     build:
       context: .
@@ -290,7 +290,7 @@ services:
         --end   \"$END_DT\"
       "
 
-  # --- NEW: Dune prices range/backfill (uses helper script) ---
+  # Dune range ingestors (with --start / --end) ---
   dune-prices-range:
     build:
       context: .
