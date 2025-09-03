@@ -1,0 +1,7 @@
+INSERT INTO {{ target_table }} ({{ target_columns }})
+SELECT {{ select_list }}
+FROM url(
+  'https://api.dune.com/api/v1/execution/{% raw %}{{DUNE_EXECUTION_ID}}{% endraw %}/results/csv?api_key={% raw %}{{DUNE_API_KEY}}{% endraw %}',
+  'CSVWithNames',
+  '{{ csv_schema }}'
+);

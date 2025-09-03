@@ -13,3 +13,9 @@ select_list: "toDate(parseDateTimeBestEffort(block_date)) AS block_date, symbol,
 date_range_predicate: "toDate(parseDateTimeBestEffort(block_date)) BETWEEN toDate('{{START_DATE}}') AND toDate('{{END_DATE}}')"
 backfill_days: 30
 date_backfill_predicate: "toDate(parseDateTimeBestEffort(block_date)) BETWEEN start_dt AND end_dt"
+
+dune_query_id_param: "5723539"
+param_start_key: "start_date"
+param_end_key: "end_date"
+param_start_type: "date"       
+param_end_type: "date"         

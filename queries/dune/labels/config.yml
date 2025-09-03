@@ -12,3 +12,9 @@ select_list: "address, label, parseDateTimeBestEffort(introduced_at) AS introduc
 date_range_predicate: "parseDateTimeBestEffort(introduced_at) BETWEEN toDateTime('{{START_DT}}') AND toDateTime('{{END_DT}}')"
 backfill_days: 30
 date_backfill_predicate: "parseDateTimeBestEffort(introduced_at) BETWEEN start_dt AND end_dt"
+
+dune_query_id_param: "5723577"
+param_start_key: "start_dt"
+param_end_key: "end_dt"
+param_start_type: "datetime"   
+param_end_type: "datetime"    
