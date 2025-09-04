@@ -12,9 +12,8 @@ COPY __init__.py .
 COPY ingestors/ ./ingestors/
 COPY utils/ ./utils/
 
-# Create directory for queries and scripts
+# Create directory for queries
 COPY queries/ ./queries/
-COPY scripts/ ./scripts/
 
 # Set execute permissions
 RUN chmod +x run_queries.py

@@ -1,6 +1,0 @@
-CREATE TABLE IF NOT EXISTS {{ target_table }} (
-  {{ columns_ddl }}
-)
-ENGINE = MergeTree
-PARTITION BY {{ partition_expr }}
-ORDER BY ({{ order_by_expr }});
