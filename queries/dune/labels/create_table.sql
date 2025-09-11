@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS playground_max.dune_labels (
+CREATE TABLE IF NOT EXISTS crawlers_data.dune_labels (
   address String, label String, introduced_at DateTime, source LowCardinality(String)
 )
 ENGINE = MergeTree
