@@ -215,3 +215,129 @@ services:
       --file-id=${GPAY_WALLETS_FILE_ID:-}
       --table-name=crawlers_data.gpay_wallets
       --max-rows=1000000
+
+
+  # Dune Labels Ingestion Services
+  dune-labels-daily-ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dune-labels-daily-ingestor
+    volumes:
+      - ./queries:/app/queries
+    environment:
+      CH_HOST: ${CH_DB_HOST}
+      CH_PORT: ${CH_NATIVE_PORT}
+      CH_USER: ${CH_USER}
+      CH_PASSWORD: ${CH_PASSWORD}
+      CH_DB: ${CH_DB}
+      CH_SECURE: ${CH_SECURE}
+      CH_VERIFY: "False"
+      
+      # Dune specific variables
+      CH_QUERY_VAR_DUNE_API_KEY: ${DUNE_API_KEY}
+      CH_QUERY_VAR_DUNE_LABELS_QUERY_ID_DAY: ${DUNE_LABELS_QUERY_ID_DAY}
+    command: >
+      --ingestor=csv
+      --create-table-sql=queries/dune/labels/create_table.sql
+      --insert-sql=queries/dune/labels/insert_daily.sql
+
+  dune-labels-full-ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dune-labels-full-ingestor
+    volumes:
+      - ./queries:/app/queries
+    environment:
+      CH_HOST: ${CH_DB_HOST}
+      CH_PORT: ${CH_NATIVE_PORT}
+      CH_USER: ${CH_USER}
+      CH_PASSWORD: ${CH_PASSWORD}
+      CH_DB: ${CH_DB}
+      CH_SECURE: ${CH_SECURE}
+      CH_VERIFY: "False"
+      
+      # Dune specific variables
+      CH_QUERY_VAR_DUNE_API_KEY: ${DUNE_API_KEY}
+      CH_QUERY_VAR_DUNE_LABELS_QUERY_ID_FULL: ${DUNE_LABELS_QUERY_ID_FULL}
+    command: >
+      --ingestor=csv
+      --create-table-sql=queries/dune/labels/create_table.sql
+      --insert-sql=queries/dune/labels/insert_full.sql
+
+  # Dune Prices Ingestion Services
+  dune-prices-daily-ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dune-prices-daily-ingestor
+    volumes:
+      - ./queries:/app/queries
+    environment:
+      CH_HOST: ${CH_DB_HOST}
+      CH_PORT: ${CH_NATIVE_PORT}
+      CH_USER: ${CH_USER}
+      CH_PASSWORD: ${CH_PASSWORD}
+      CH_DB: ${CH_DB}
+      CH_SECURE: ${CH_SECURE}
+      CH_VERIFY: "False"
+      
+      # Dune specific variables
+      CH_QUERY_VAR_DUNE_API_KEY: ${DUNE_API_KEY}
+      CH_QUERY_VAR_DUNE_PRICES_QUERY_ID_DAY: ${DUNE_PRICES_QUERY_ID_DAY}
+    command: >
+      --ingestor=csv
+      --create-table-sql=queries/dune/prices/create_table.sql
+      --insert-sql=queries/dune/prices/insert_daily.sql
+
+  dune-prices-full-ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dune-prices-full-ingestor
+    volumes:
+      - ./queries:/app/queries
+    environment:
+      CH_HOST: ${CH_DB_HOST}
+      CH_PORT: ${CH_NATIVE_PORT}
+      CH_USER: ${CH_USER}
+      CH_PASSWORD: ${CH_PASSWORD}
+      CH_DB: ${CH_DB}
+      CH_SECURE: ${CH_SECURE}
+      CH_VERIFY: "False"
+      
+      # Dune specific variables
+      CH_QUERY_VAR_DUNE_API_KEY: ${DUNE_API_KEY}
+      CH_QUERY_VAR_DUNE_PRICES_QUERY_ID_FULL: ${DUNE_PRICES_QUERY_ID_FULL}
+    command: >
+      --ingestor=csv
+      --create-table-sql=queries/dune/prices/create_table.sql
+      --insert-sql=queries/dune/prices/insert_full.sql
+
+  # Combined Dune ingestor for both labels and prices (daily)
+  dune-all-daily-ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dune-all-daily-ingestor
+    volumes:
+      - ./queries:/app/queries
+    environment:
+      CH_HOST: ${CH_DB_HOST}
+      CH_PORT: ${CH_NATIVE_PORT}
+      CH_USER: ${CH_USER}
+      CH_PASSWORD: ${CH_PASSWORD}
+      CH_DB: ${CH_DB}
+      CH_SECURE: ${CH_SECURE}
+      CH_VERIFY: "False"
+      CH_QUERY_VAR_DUNE_API_KEY: ${DUNE_API_KEY}
+      CH_QUERY_VAR_DUNE_LABELS_QUERY_ID_DAY: ${DUNE_LABELS_EXECUTION_ID}
+      CH_QUERY_VAR_DUNE_PRICES_QUERY_ID_DAY: ${DUNE_PRICES_EXECUTION_ID}
+    entrypoint: []
+    command: >
+      /bin/bash -c "
+      python run_queries.py --ingestor=csv --create-table-sql=queries/dune/labels/create_table.sql --insert-sql=queries/dune/labels/insert_daily.sql && \
+      python run_queries.py --ingestor=csv --create-table-sql=queries/dune/prices/create_table.sql --insert-sql=queries/dune/prices/insert_daily.sql
+      "
+      

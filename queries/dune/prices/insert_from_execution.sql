@@ -1,7 +1,7 @@
 INSERT INTO crawlers_data.dune_prices (block_date, symbol, price)
 SELECT toDate(parseDateTimeBestEffort(block_date)) AS block_date, symbol, toFloat64(price) AS price
 FROM url(
-  'https://api.dune.com/api/v1/execution/{{DUNE_EXECUTION_ID}}/results/csv?api_key={{DUNE_API_KEY}}',
+  'https://api.dune.com/api/v1/execution/{{DUNE_PRICES_EXECUTION_ID}}/results/csv?api_key={{DUNE_API_KEY}}',
   'CSVWithNames',
   'block_date String, symbol String, price Float64'
 );
