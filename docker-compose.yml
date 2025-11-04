@@ -361,6 +361,50 @@ services:
       --create-table-sql=queries/dune/bridge_flows/create_table.sql
       --insert-sql=queries/dune/bridge_flows/insert_full.sql
 
+  dune-gno-supply-full-ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dune-gno-supply-full-ingestor
+    volumes:
+      - ./queries:/app/queries
+    environment:
+      CH_HOST: ${CH_DB_HOST}
+      CH_PORT: ${CH_NATIVE_PORT}
+      CH_USER: ${CH_USER}
+      CH_PASSWORD: ${CH_PASSWORD}
+      CH_DB: ${CH_DB}
+      CH_SECURE: ${CH_SECURE}
+      CH_VERIFY: "False"
+      CH_QUERY_VAR_DUNE_API_KEY: ${DUNE_API_KEY}
+      CH_QUERY_VAR_DUNE_GNO_SUPPLY_QUERY_ID: ${DUNE_GNO_SUPPLY_QUERY_ID_FULL}
+    command: >
+      --ingestor=csv
+      --create-table-sql=queries/dune/gno_supply/create_table.sql
+      --insert-sql=queries/dune/gno_supply/insert.sql
+
+  dune-gno-supply-daily-ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dune-gno-supply-daily-ingestor
+    volumes:
+      - ./queries:/app/queries
+    environment:
+      CH_HOST: ${CH_DB_HOST}
+      CH_PORT: ${CH_NATIVE_PORT}
+      CH_USER: ${CH_USER}
+      CH_PASSWORD: ${CH_PASSWORD}
+      CH_DB: ${CH_DB}
+      CH_SECURE: ${CH_SECURE}
+      CH_VERIFY: "False"
+      CH_QUERY_VAR_DUNE_API_KEY: ${DUNE_API_KEY}
+      CH_QUERY_VAR_DUNE_GNO_SUPPLY_QUERY_ID: ${DUNE_GNO_SUPPLY_QUERY_ID_DAY}
+    command: >
+      --ingestor=csv
+      --create-table-sql=queries/dune/gno_supply/create_table.sql
+      --insert-sql=queries/dune/gno_supply/insert.sql
+
   # Combined Dune ingestor for labels, prices and bridge flows (daily)
   dune-all-daily-ingestor:
     build:
@@ -381,12 +425,14 @@ services:
       CH_QUERY_VAR_DUNE_LABELS_QUERY_ID_DAY: ${DUNE_LABELS_QUERY_ID_DAY}
       CH_QUERY_VAR_DUNE_PRICES_QUERY_ID_DAY: ${DUNE_PRICES_QUERY_ID_DAY}
       CH_QUERY_VAR_DUNE_BRIDGE_FLOWS_QUERY_ID_DAY: ${DUNE_BRIDGE_FLOWS_QUERY_ID_DAY}
+      CH_QUERY_VAR_DUNE_GNO_SUPPLY_QUERY_ID: ${DUNE_GNO_SUPPLY_QUERY_ID_DAY}
     entrypoint: []
     command: >
       /bin/bash -c "
       python run_queries.py --ingestor=csv --create-table-sql=queries/dune/labels/create_table.sql --insert-sql=queries/dune/labels/insert_daily.sql && \
       python run_queries.py --ingestor=csv --create-table-sql=queries/dune/prices/create_table.sql --insert-sql=queries/dune/prices/insert_daily.sql && \
       python run_queries.py --ingestor=csv --create-table-sql=queries/dune/bridge_flows/create_table.sql --insert-sql=queries/dune/bridge_flows/insert_daily.sql
+       python run_queries.py --ingestor=csv --create-table-sql=queries/dune/gno_supply/create_table.sql --insert-sql=queries/dune/gno_supply/insert.sql
       "
       
   
