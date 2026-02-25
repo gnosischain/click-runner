@@ -15,7 +15,7 @@ from clickhouse_connect.driver.client import Client
 
 from .base import BaseIngestor
 
-logger = logging.getLogger("click_runner")
+logger = logging.getLogger("clickhouse_runner")
 
 class GDriveIngestor(BaseIngestor):
     """

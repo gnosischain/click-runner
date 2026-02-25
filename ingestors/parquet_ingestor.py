@@ -8,7 +8,7 @@ from clickhouse_connect.driver.client import Client
 from .base import BaseIngestor
 from utils.s3 import list_s3_files, get_latest_file
 
-logger = logging.getLogger("click_runner")
+logger = logging.getLogger("clickhouse_runner")
 
 class ParquetIngestor(BaseIngestor):
     """

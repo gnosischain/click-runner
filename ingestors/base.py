@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Any, Tuple
 
 from clickhouse_connect.driver.client import Client
 
-logger = logging.getLogger("click_runner")
+logger = logging.getLogger("clickhouse_runner")
 
 class BaseIngestor(ABC):
     """
