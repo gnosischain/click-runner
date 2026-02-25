@@ -42,10 +42,10 @@ class CSVIngestor(BaseIngestor):
         1. Create table (if needed)
         2. Insert data from CSV URL
         3. Optimize table (if needed)
-        
+
         Args:
             skip_table_creation: If True, skip the table creation step
-            
+
         Returns:
             True if successful, False otherwise
         """
@@ -55,18 +55,31 @@ class CSVIngestor(BaseIngestor):
                 create_query = self.load_sql_file(self.create_table_sql)
                 logger.info(f"Creating table using {self.create_table_sql}")
                 self.client.command(create_query)
-            
+
             # Insert data
             insert_query = self.load_sql_file(self.insert_sql)
             logger.info(f"Inserting data using {self.insert_sql}")
+
+            table_name = self.extract_table_name(insert_query)
+            count_before = 0
+            if table_name:
+                count_before = self.get_row_count(table_name)
+                logger.info(f"Row count before insert in {table_name}: {count_before}")
+
             self.client.command(insert_query)
-            
+
+            if table_name:
+                count_after = self.get_row_count(table_name)
+                rows_inserted = count_after - count_before
+                logger.info(f"Row count after insert in {table_name}: {count_after}")
+                logger.info(f"Rows inserted: {rows_inserted}")
+
             # Optimize if specified
             if self.optimize_sql:
                 optimize_query = self.load_sql_file(self.optimize_sql)
                 logger.info(f"Optimizing table using {self.optimize_sql}")
                 self.client.command(optimize_query)
-                
+
             return True
         except Exception as e:
             logger.error(f"Error in CSV ingestion: {e}")
