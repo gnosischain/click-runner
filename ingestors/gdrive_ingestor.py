@@ -381,23 +381,26 @@ class GDriveIngestor(BaseIngestor):
             # Insert data
             logger.info(f"Inserting {len(filtered_data)} rows into {self.table_name}")
             logger.info(f"Using columns: {filtered_columns}")
-            
+
             # Log a sample of the filtered data
             if filtered_data:
                 logger.info(f"Sample row: {filtered_data[0]}")
-            
+
+            count_before = self.get_row_count(self.table_name)
+            logger.info(f"Row count before insert in {self.table_name}: {count_before}")
+
             self.client.insert(self.table_name, filtered_data, column_names=filtered_columns)
-            
+
+            count_after = self.get_row_count(self.table_name)
+            rows_inserted = count_after - count_before
+            logger.info(f"Row count after insert in {self.table_name}: {count_after}")
+            logger.info(f"Rows inserted: {rows_inserted}")
+
             # Optimize if specified
             if self.optimize_sql:
                 optimize_query = self.load_sql_file(self.optimize_sql)
                 logger.info(f"Optimizing table using {self.optimize_sql}")
                 self.client.command(optimize_query)
-            
-            # Log success
-            result = self.client.query(f"SELECT COUNT(*) FROM {self.table_name}")
-            count = result.result_rows[0][0]
-            logger.info(f"Successfully imported {len(filtered_data)} rows. Total count: {count}")
                 
             return True
             

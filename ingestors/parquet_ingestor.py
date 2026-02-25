@@ -121,11 +121,19 @@ class ParquetIngestor(BaseIngestor):
                 return False
             
             # 3. Generate and execute the INSERT query
+            count_before = self.get_row_count(self.table_name)
+            logger.info(f"Row count before insert in {self.table_name}: {count_before}")
+
             for s3_path in s3_paths:
                 insert_query = self._generate_insert_query(s3_path, access_key, secret_key, region)
                 logger.info(f"Inserting data from {s3_path}")
                 self.client.command(insert_query)
-            
+
+            count_after = self.get_row_count(self.table_name)
+            rows_inserted = count_after - count_before
+            logger.info(f"Row count after insert in {self.table_name}: {count_after}")
+            logger.info(f"Rows inserted: {rows_inserted}")
+
             return True
             
         except Exception as e:
