@@ -68,7 +68,7 @@ For Ember data:
 
 ## Running Modes
 
-The system supports three primary running modes, controlled by the `--ingestor` parameter:
+The system supports four primary running modes, controlled by the `--ingestor` parameter:
 
 ### 1. Query Mode (`--ingestor=query`)
 
@@ -163,6 +163,28 @@ docker-compose run probelab-agent-semvers-ingestor
 - Backfilling historical Parquet data
 - Importing structured data from data lakes
 
+### 4. Dune Execute-Only Mode (`--ingestor=dune-execute-only`)
+
+Trigger dedicated Dune queries through ClickHouse without saving query results into ClickHouse tables.
+
+**Usage:**
+```bash
+export DUNE_EXECUTE_ONLY_QUERY_IDS="1234567,2345678,3456789"
+export CH_QUERY_VAR_DUNE_API_KEY="your-dune-api-key"
+
+python run_queries.py --ingestor=dune-execute-only
+```
+
+Using Docker:
+```bash
+docker-compose run --rm dune-execute-only-daily-ingestor
+```
+
+**Use cases:**
+- Refreshing Dune result caches for a separate set of queries
+- Scheduling Dune query executions independently from data ingestion
+- Keeping execute-only query IDs separate from the existing Dune ingestion queries
+
 ## Common Parameters
 
 All modes share these common parameters:
@@ -183,6 +205,7 @@ The `docker-compose.yml` file includes several predefined services:
 1. **click-runner**: Generic service that can run in any mode
 2. **ember-ingestor**: Specialized for Ember CSV data
 3. **probelab-agent-semvers-ingestor**: Example for one ProbeLab Parquet dataset
+4. **dune-execute-only-daily-ingestor**: Triggers dedicated Dune queries without ingesting their results
 
 ## Setting Up Cron Jobs
 
