@@ -434,5 +434,26 @@ services:
       python run_queries.py --ingestor=csv --create-table-sql=queries/dune/bridge_flows/create_table.sql --insert-sql=queries/dune/bridge_flows/insert_daily.sql
        python run_queries.py --ingestor=csv --create-table-sql=queries/dune/gno_supply/create_table.sql --insert-sql=queries/dune/gno_supply/insert.sql
       "
+
+  dune-execute-only-daily-ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dune-execute-only-daily-ingestor
+    volumes:
+      - ./queries:/app/queries
+    environment:
+      CH_HOST: ${CH_DB_HOST}
+      CH_PORT: ${CH_NATIVE_PORT}
+      CH_USER: ${CH_USER}
+      CH_PASSWORD: ${CH_PASSWORD}
+      CH_DB: ${CH_DB}
+      CH_SECURE: ${CH_SECURE}
+      CH_VERIFY: "False"
+
+      CH_QUERY_VAR_DUNE_API_KEY: ${DUNE_API_KEY}
+      DUNE_EXECUTE_ONLY_QUERY_IDS: ${DUNE_EXECUTE_ONLY_QUERY_IDS}
+    command: >
+      --ingestor=dune-execute-only
       
   

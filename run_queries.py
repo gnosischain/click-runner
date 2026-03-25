@@ -75,6 +75,23 @@ def get_query_variables() -> Dict[str, str]:
     
     return query_vars
 
+def parse_csv_list(raw: str) -> List[str]:
+    """Parse a comma-separated string into a list of non-empty items."""
+    return [item.strip() for item in (raw or "").split(",") if item.strip()]
+
+def load_sql_template(file_path: str, variables: Dict[str, str]) -> str:
+    """Load SQL from a file and replace {{VARIABLE}} placeholders."""
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"SQL file not found: {file_path}")
+
+    with open(file_path, "r", encoding="utf-8") as f:
+        sql = f.read()
+
+    for key, value in variables.items():
+        sql = sql.replace("{{" + key + "}}", value)
+
+    return sql
+
 def create_argparser() -> argparse.ArgumentParser:
     """Create command line argument parser"""
     parser = argparse.ArgumentParser(description="ClickHouse query runner with support for different ingestors")
@@ -89,7 +106,7 @@ def create_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--verify", default=os.getenv("CH_VERIFY", "True"), help="Verify TLS certificate")
     
     # Ingestor parameters
-    parser.add_argument("--ingestor", choices=["csv", "parquet", "gdrive", "query"], default="query", 
+    parser.add_argument("--ingestor", choices=["csv", "parquet", "gdrive", "query", "dune-execute-only"], default="query",
                        help="Type of ingestor to use")
     
     # CSV ingestor parameters
@@ -110,6 +127,11 @@ def create_argparser() -> argparse.ArgumentParser:
     
     # Generic query parameters
     parser.add_argument("--queries", help="Comma-separated list of query files to execute")
+    parser.add_argument(
+        "--dune-execute-only-query-ids",
+        default=os.getenv("DUNE_EXECUTE_ONLY_QUERY_IDS", ""),
+        help="Comma-separated list of dedicated Dune query IDs to execute without ingestion",
+    )
     parser.add_argument("--skip-table-creation", action="store_true", help="Skip table creation steps")
     
     return parser
@@ -255,6 +277,36 @@ def run_query_ingestor(args, client, query_vars):
     
     return ingestor.execute_queries(queries)
 
+def run_dune_execute_only(args, client, query_vars):
+    """Trigger dedicated Dune queries without saving results to ClickHouse."""
+    query_ids = parse_csv_list(args.dune_execute_only_query_ids)
+    if not query_ids:
+        logger.error("No execute-only Dune query IDs specified")
+        return False
+    if "DUNE_API_KEY" not in query_vars:
+        logger.error("Missing CH_QUERY_VAR_DUNE_API_KEY for execute-only Dune queries")
+        return False
+
+    sql_file = "queries/dune/execute_only/execute_query.sql"
+    success = True
+
+    for query_id in query_ids:
+        try:
+            sql = load_sql_template(
+                sql_file,
+                {
+                    **query_vars,
+                    "DUNE_EXECUTE_ONLY_QUERY_ID": query_id,
+                },
+            )
+            logger.info(f"Triggering execute-only Dune query {query_id}")
+            client.command(sql)
+        except Exception as e:
+            success = False
+            logger.error(f"Failed execute-only Dune query {query_id}: {e}")
+
+    return success
+
 def main():
     """Main entry point"""
     parser = create_argparser()
@@ -286,6 +338,8 @@ def main():
         success = run_parquet_ingestor(args, client, query_variables)
     elif args.ingestor == "gdrive":
         success = run_gdrive_ingestor(args, client, query_variables)
+    elif args.ingestor == "dune-execute-only":
+        success = run_dune_execute_only(args, client, query_variables)
     else:  # "query"
         success = run_query_ingestor(args, client, query_variables)
     
