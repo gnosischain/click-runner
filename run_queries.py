@@ -12,6 +12,7 @@ from clickhouse_connect.driver.client import Client
 from ingestors.csv_ingestor import CSVIngestor
 from ingestors.parquet_ingestor import ParquetIngestor
 from ingestors.gdrive_ingestor import GDriveIngestor
+from ingestors.mixpanel_ingestor import MixpanelIngestor
 
 # Setup logging
 logger = logging.getLogger("clickhouse_runner")
@@ -106,7 +107,7 @@ def create_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--verify", default=os.getenv("CH_VERIFY", "True"), help="Verify TLS certificate")
     
     # Ingestor parameters
-    parser.add_argument("--ingestor", choices=["csv", "parquet", "gdrive", "query", "dune-execute-only"], default="query",
+    parser.add_argument("--ingestor", choices=["csv", "parquet", "gdrive", "query", "dune-execute-only", "mixpanel"], default="query",
                        help="Type of ingestor to use")
     
     # CSV ingestor parameters
@@ -133,7 +134,16 @@ def create_argparser() -> argparse.ArgumentParser:
         help="Comma-separated list of dedicated Dune query IDs to execute without ingestion",
     )
     parser.add_argument("--skip-table-creation", action="store_true", help="Skip table creation steps")
-    
+
+    # Mixpanel ingestor parameters
+    parser.add_argument("--mixpanel-mode", choices=["daily", "backfill"], default="daily",
+                       help="Mixpanel ingestion mode")
+    parser.add_argument("--mixpanel-from-date", help="Start date for Mixpanel export (YYYY-MM-DD)")
+    parser.add_argument("--mixpanel-to-date", help="End date for Mixpanel export (YYYY-MM-DD)")
+    parser.add_argument("--mixpanel-event-filter", help="JSON array of event names to filter")
+    parser.add_argument("--mixpanel-region", choices=["US", "EU", "IN"], default=os.getenv("MIXPANEL_REGION", "US"),
+                       help="Mixpanel data residency region (default: US)")
+
     return parser
 
 def run_csv_ingestor(args, client, query_vars):
@@ -277,6 +287,52 @@ def run_query_ingestor(args, client, query_vars):
     
     return ingestor.execute_queries(queries)
 
+def run_mixpanel_ingestor(args, client, query_vars):
+    """Run the Mixpanel raw event export ingestor"""
+    create_table_sql = args.create_table_sql
+    create_state_sql = os.getenv("CH_MIXPANEL_STATE_SQL", "queries/mixpanel/create_state_table.sql")
+
+    if not create_table_sql:
+        ch_queries = os.getenv("CH_QUERIES", "").split(",")
+        if ch_queries[0].strip():
+            create_table_sql = ch_queries[0].strip()
+
+    if not create_table_sql:
+        create_table_sql = "queries/mixpanel/create_events_table.sql"
+
+    project_id = query_vars.get("MIXPANEL_PROJECT_ID", "")
+    sa_username = query_vars.get("MIXPANEL_SA_USERNAME", "")
+    sa_secret = query_vars.get("MIXPANEL_SA_SECRET", "")
+    database = query_vars.get("MIXPANEL_DATABASE", "mixpanel")
+    table_name = args.table_name or os.getenv("CH_TABLE_NAME", f"{database}.mixpanel_raw_events")
+
+    if not project_id or not sa_username or not sa_secret:
+        logger.error(
+            "Missing Mixpanel credentials. Required env vars: "
+            "CH_QUERY_VAR_MIXPANEL_PROJECT_ID, CH_QUERY_VAR_MIXPANEL_SA_USERNAME, "
+            "CH_QUERY_VAR_MIXPANEL_SA_SECRET"
+        )
+        return False
+
+    ingestor = MixpanelIngestor(
+        client=client,
+        variables={**query_vars, "MIXPANEL_DATABASE": database},
+        create_table_sql=create_table_sql,
+        create_state_sql=create_state_sql,
+        table_name=table_name,
+        project_id=project_id,
+        sa_username=sa_username,
+        sa_secret=sa_secret,
+        from_date=args.mixpanel_from_date,
+        to_date=args.mixpanel_to_date,
+        event_filter=args.mixpanel_event_filter,
+        mode=args.mixpanel_mode,
+        region=args.mixpanel_region,
+    )
+
+    return ingestor.ingest(skip_table_creation=args.skip_table_creation)
+
+
 def run_dune_execute_only(args, client, query_vars):
     """Trigger dedicated Dune queries without saving results to ClickHouse."""
     query_ids = parse_csv_list(args.dune_execute_only_query_ids)
@@ -338,6 +394,8 @@ def main():
         success = run_parquet_ingestor(args, client, query_variables)
     elif args.ingestor == "gdrive":
         success = run_gdrive_ingestor(args, client, query_variables)
+    elif args.ingestor == "mixpanel":
+        success = run_mixpanel_ingestor(args, client, query_variables)
     elif args.ingestor == "dune-execute-only":
         success = run_dune_execute_only(args, client, query_variables)
     else:  # "query"
