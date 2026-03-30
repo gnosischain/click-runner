@@ -435,6 +435,61 @@ services:
        python run_queries.py --ingestor=csv --create-table-sql=queries/dune/gno_supply/create_table.sql --insert-sql=queries/dune/gno_supply/insert.sql
       "
 
+  # Mixpanel Events Ingestion Services
+  mixpanel-events-daily-ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mixpanel-events-daily-ingestor
+    volumes:
+      - ./queries:/app/queries
+    environment:
+      CH_HOST: ${CH_DB_HOST}
+      CH_PORT: ${CH_NATIVE_PORT}
+      CH_USER: ${MIXPANEL_CH_USER:-${CH_USER}}
+      CH_PASSWORD: ${MIXPANEL_CH_PASSWORD:-${CH_PASSWORD}}
+      CH_DB: ${MIXPANEL_DATABASE:-mixpanel}
+      CH_SECURE: ${CH_SECURE}
+      CH_VERIFY: "False"
+
+      CH_QUERY_VAR_MIXPANEL_PROJECT_ID: ${MIXPANEL_PROJECT_ID}
+      CH_QUERY_VAR_MIXPANEL_SA_USERNAME: ${MIXPANEL_SA_USERNAME}
+      CH_QUERY_VAR_MIXPANEL_SA_SECRET: ${MIXPANEL_SA_SECRET}
+      CH_QUERY_VAR_MIXPANEL_DATABASE: ${MIXPANEL_DATABASE:-mixpanel}
+      MIXPANEL_REGION: ${MIXPANEL_REGION:-US}
+    command: >
+      --ingestor=mixpanel
+      --mixpanel-mode=daily
+      --create-table-sql=queries/mixpanel/create_events_table.sql
+
+  mixpanel-events-backfill-ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mixpanel-events-backfill-ingestor
+    volumes:
+      - ./queries:/app/queries
+    environment:
+      CH_HOST: ${CH_DB_HOST}
+      CH_PORT: ${CH_NATIVE_PORT}
+      CH_USER: ${MIXPANEL_CH_USER:-${CH_USER}}
+      CH_PASSWORD: ${MIXPANEL_CH_PASSWORD:-${CH_PASSWORD}}
+      CH_DB: ${MIXPANEL_DATABASE:-mixpanel}
+      CH_SECURE: ${CH_SECURE}
+      CH_VERIFY: "False"
+
+      CH_QUERY_VAR_MIXPANEL_PROJECT_ID: ${MIXPANEL_PROJECT_ID}
+      CH_QUERY_VAR_MIXPANEL_SA_USERNAME: ${MIXPANEL_SA_USERNAME}
+      CH_QUERY_VAR_MIXPANEL_SA_SECRET: ${MIXPANEL_SA_SECRET}
+      CH_QUERY_VAR_MIXPANEL_DATABASE: ${MIXPANEL_DATABASE:-mixpanel}
+      MIXPANEL_REGION: ${MIXPANEL_REGION:-US}
+    command: >
+      --ingestor=mixpanel
+      --mixpanel-mode=backfill
+      --mixpanel-from-date=${MIXPANEL_BACKFILL_FROM}
+      --mixpanel-to-date=${MIXPANEL_BACKFILL_TO}
+      --create-table-sql=queries/mixpanel/create_events_table.sql
+
   dune-execute-only-daily-ingestor:
     build:
       context: .
