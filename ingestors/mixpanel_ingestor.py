@@ -120,6 +120,9 @@ class MixpanelIngestor(BaseIngestor):
             logger.error(str(e))
             return False
 
+        if end_date is None:
+            return True
+
         logger.info(f"Processing date range: {start_date} to {end_date}")
 
         # Step 3: Log initial row count
@@ -185,7 +188,7 @@ class MixpanelIngestor(BaseIngestor):
 
         if start > yesterday:
             logger.info("Already up to date (last completed date is yesterday or later)")
-            raise ValueError("Already up to date")
+            return start, None  # Signal: nothing to do
 
         return start, yesterday
 
