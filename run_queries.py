@@ -150,6 +150,9 @@ def create_argparser() -> argparse.ArgumentParser:
                        help="CoW ingestion mode: daily (recent owners) or backfill (all owners)")
     parser.add_argument("--cow-lookback-days", type=int, default=2,
                        help="Number of days to look back for daily mode (default: 2)")
+    parser.add_argument("--cow-backfill-from",
+                       default=os.getenv("COW_BACKFILL_FROM", ""),
+                       help="Start date for backfill mode (YYYY-MM-DD), e.g. 2024-01-01")
     parser.add_argument("--cow-source-table",
                        default=os.getenv("COW_SOURCE_TABLE", ""),
                        help="Fully qualified table to read owner addresses from (e.g. dbt.int_execution_cow_trades)")
@@ -391,6 +394,7 @@ def run_cow_ingestor(args, client, query_vars):
         source_table=source_table,
         mode=args.cow_mode,
         lookback_days=args.cow_lookback_days,
+        backfill_from=args.cow_backfill_from or None,
     )
 
     return ingestor.ingest(skip_table_creation=args.skip_table_creation)

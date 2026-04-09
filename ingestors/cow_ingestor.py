@@ -31,6 +31,7 @@ class CowIngestor(BaseIngestor):
         source_table: str,
         mode: str = "daily",
         lookback_days: int = 2,
+        backfill_from: Optional[str] = None,
     ):
         super().__init__(client, variables)
         self.create_table_sql = create_table_sql
@@ -38,14 +39,19 @@ class CowIngestor(BaseIngestor):
         self.source_table = source_table
         self.mode = mode
         self.lookback_days = lookback_days
+        self.backfill_from = backfill_from
 
     def _get_owners(self) -> List[str]:
         """Get list of owner addresses to query from ClickHouse."""
         if self.mode == "backfill":
+            date_filter = ""
+            if self.backfill_from:
+                date_filter = f"AND block_timestamp >= toDate('{self.backfill_from}')"
             sql = f"""
                 SELECT DISTINCT taker
                 FROM {self.source_table}
                 WHERE taker IS NOT NULL AND taker != ''
+                  {date_filter}
             """
         else:
             sql = f"""
