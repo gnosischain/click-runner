@@ -13,6 +13,7 @@ from ingestors.csv_ingestor import CSVIngestor
 from ingestors.parquet_ingestor import ParquetIngestor
 from ingestors.gdrive_ingestor import GDriveIngestor
 from ingestors.mixpanel_ingestor import MixpanelIngestor
+from ingestors.cow_ingestor import CowIngestor
 
 # Setup logging
 logger = logging.getLogger("clickhouse_runner")
@@ -107,7 +108,7 @@ def create_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--verify", default=os.getenv("CH_VERIFY", "True"), help="Verify TLS certificate")
     
     # Ingestor parameters
-    parser.add_argument("--ingestor", choices=["csv", "parquet", "gdrive", "query", "dune-execute-only", "mixpanel"], default="query",
+    parser.add_argument("--ingestor", choices=["csv", "parquet", "gdrive", "query", "dune-execute-only", "mixpanel", "cow"], default="query",
                        help="Type of ingestor to use")
     
     # CSV ingestor parameters
@@ -143,6 +144,15 @@ def create_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--mixpanel-event-filter", help="JSON array of event names to filter")
     parser.add_argument("--mixpanel-region", choices=["US", "EU", "IN"], default=os.getenv("MIXPANEL_REGION", "US"),
                        help="Mixpanel data residency region (default: US)")
+
+    # CoW ingestor parameters
+    parser.add_argument("--cow-mode", choices=["daily", "backfill"], default="daily",
+                       help="CoW ingestion mode: daily (recent owners) or backfill (all owners)")
+    parser.add_argument("--cow-lookback-days", type=int, default=2,
+                       help="Number of days to look back for daily mode (default: 2)")
+    parser.add_argument("--cow-source-table",
+                       default=os.getenv("COW_SOURCE_TABLE", ""),
+                       help="Fully qualified table to read owner addresses from (e.g. dbt.int_execution_cow_trades)")
 
     return parser
 
@@ -363,6 +373,29 @@ def run_dune_execute_only(args, client, query_vars):
 
     return success
 
+def run_cow_ingestor(args, client, query_vars):
+    """Run the CoW Protocol fee ingestor"""
+    create_table_sql = args.create_table_sql or "queries/cow/create_table.sql"
+    table_name = args.table_name or os.getenv("CH_TABLE_NAME", "")
+    source_table = args.cow_source_table
+
+    if not table_name or not source_table:
+        logger.error("CoW ingestor requires --table-name and --cow-source-table")
+        return False
+
+    ingestor = CowIngestor(
+        client=client,
+        variables=query_vars,
+        create_table_sql=create_table_sql,
+        table_name=table_name,
+        source_table=source_table,
+        mode=args.cow_mode,
+        lookback_days=args.cow_lookback_days,
+    )
+
+    return ingestor.ingest(skip_table_creation=args.skip_table_creation)
+
+
 def main():
     """Main entry point"""
     parser = create_argparser()
@@ -396,6 +429,8 @@ def main():
         success = run_gdrive_ingestor(args, client, query_variables)
     elif args.ingestor == "mixpanel":
         success = run_mixpanel_ingestor(args, client, query_variables)
+    elif args.ingestor == "cow":
+        success = run_cow_ingestor(args, client, query_variables)
     elif args.ingestor == "dune-execute-only":
         success = run_dune_execute_only(args, client, query_variables)
     else:  # "query"
