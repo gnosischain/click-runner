@@ -6,6 +6,8 @@ from typing import Dict, List, Optional, Any, Tuple
 
 from clickhouse_connect.driver.client import Client
 
+import observability as obs
+
 logger = logging.getLogger("clickhouse_runner")
 
 class BaseIngestor(ABC):
@@ -51,11 +53,21 @@ class BaseIngestor(ABC):
         """
         for query in queries:
             try:
-                logger.info(f"Executing query: {query[:100]}...")
-                self.client.command(query)
+                logger.info(
+                    f"Executing query: {query[:100]}...",
+                    extra={"event": "query_execute_start", "ingestor": "query"},
+                )
+                with obs.time_operation(obs.get_job_name(), "query", "execute_query"):
+                    self.client.command(query)
             except Exception as e:
-                logger.error(f"Error executing query: {e}")
-                logger.error(f"Failed query: {query}")
+                logger.error(
+                    f"Error executing query: {e}",
+                    extra={"event": "query_execute_failure", "ingestor": "query"},
+                )
+                logger.error(
+                    f"Failed query: {query}",
+                    extra={"event": "query_execute_failed_sql", "ingestor": "query"},
+                )
                 return False
         return True
     

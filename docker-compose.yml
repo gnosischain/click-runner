@@ -59,6 +59,58 @@ services:
       --insert-sql=queries/ember/insert_ember_data.sql
       --optimize-sql=queries/ember/optimize_ember_data.sql
     
+  # CoW Protocol fee data ingestion (backfill - all historical owners)
+  cow-fees-backfill-ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cow-fees-backfill-ingestor
+    volumes:
+      - ./queries:/app/queries
+    environment:
+      CH_HOST: ${CH_DB_HOST}
+      CH_PORT: ${CH_NATIVE_PORT}
+      CH_USER: ${CH_USER}
+      CH_PASSWORD: ${CH_PASSWORD}
+      CH_DB: ${CH_DB}
+      CH_SECURE: ${CH_SECURE}
+      CH_VERIFY: "False"
+      CH_QUERY_VAR_COW_DATABASE: crawlers_data
+      COW_SOURCE_TABLE: dbt.int_execution_cow_trades
+    command: >
+      --ingestor=cow
+      --cow-mode=backfill
+      --cow-max-pages=500
+      --create-table-sql=queries/cow/create_table.sql
+      --table-name=crawlers_data.cow_api_trade_fees
+      --cow-source-table=dbt.int_execution_cow_trades
+
+  # CoW Protocol fee data ingestion (daily - recent owners only)
+  cow-fees-daily-ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cow-fees-daily-ingestor
+    volumes:
+      - ./queries:/app/queries
+    environment:
+      CH_HOST: ${CH_DB_HOST}
+      CH_PORT: ${CH_NATIVE_PORT}
+      CH_USER: ${CH_USER}
+      CH_PASSWORD: ${CH_PASSWORD}
+      CH_DB: ${CH_DB}
+      CH_SECURE: ${CH_SECURE}
+      CH_VERIFY: "False"
+      CH_QUERY_VAR_COW_DATABASE: crawlers_data
+      COW_SOURCE_TABLE: dbt.int_execution_cow_trades
+    command: >
+      --ingestor=cow
+      --cow-mode=daily
+      --cow-lookback-days=2
+      --create-table-sql=queries/cow/create_table.sql
+      --table-name=crawlers_data.cow_api_trade_fees
+      --cow-source-table=dbt.int_execution_cow_trades
+
   # Example service for ProbeLab data ingestion
   probelab-agent-semvers-ingestor:
     build:

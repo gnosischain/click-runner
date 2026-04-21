@@ -9,3 +9,4 @@ google-auth
 google-auth-oauthlib
 google-auth-httplib2
 requests
+prometheus_client==0.21.0

@@ -13,6 +13,7 @@ from googleapiclient.http import MediaIoBaseDownload
 
 from clickhouse_connect.driver.client import Client
 
+import observability as obs
 from .base import BaseIngestor
 
 logger = logging.getLogger("clickhouse_runner")
@@ -78,7 +79,10 @@ class GDriveIngestor(BaseIngestor):
             # Get file metadata to determine file name
             file_metadata = service.files().get(fileId=self.file_id).execute()
             file_name = file_metadata.get('name', 'unknown_file')
-            logger.info(f"Downloading file: {file_name} (ID: {self.file_id})")
+            logger.info(
+                f"Downloading file: {file_name} (ID: {self.file_id})",
+                extra={"event": "gdrive_download_start", "ingestor": "gdrive", "table": self.table_name},
+            )
             
             # Download file content
             request = service.files().get_media(fileId=self.file_id)
@@ -371,7 +375,8 @@ class GDriveIngestor(BaseIngestor):
             if not skip_table_creation:
                 create_query = self.load_sql_file(self.create_table_sql)
                 logger.info(f"Creating table using {self.create_table_sql}")
-                self.client.command(create_query)
+                with obs.time_operation(obs.get_job_name(), "gdrive", "create_table"):
+                    self.client.command(create_query)
             
             # Filter columns and convert data to match table structure
             filtered_columns, filtered_data = self.filter_columns_and_convert_data(column_names, data_rows)
@@ -389,21 +394,27 @@ class GDriveIngestor(BaseIngestor):
             count_before = self.get_row_count(self.table_name)
             logger.info(f"Row count before insert in {self.table_name}: {count_before}")
 
-            self.client.insert(self.table_name, filtered_data, column_names=filtered_columns)
+            with obs.time_operation(obs.get_job_name(), "gdrive", "insert"):
+                self.client.insert(self.table_name, filtered_data, column_names=filtered_columns)
 
             count_after = self.get_row_count(self.table_name)
             rows_inserted = count_after - count_before
             logger.info(f"Row count after insert in {self.table_name}: {count_after}")
             logger.info(f"Rows inserted: {rows_inserted}")
+            obs.observe_rows("gdrive", self.table_name, rows_inserted)
 
             # Optimize if specified
             if self.optimize_sql:
                 optimize_query = self.load_sql_file(self.optimize_sql)
                 logger.info(f"Optimizing table using {self.optimize_sql}")
-                self.client.command(optimize_query)
+                with obs.time_operation(obs.get_job_name(), "gdrive", "optimize"):
+                    self.client.command(optimize_query)
                 
             return True
             
         except Exception as e:
-            logger.error(f"Error in Google Drive ingestion: {e}")
+            logger.error(
+                f"Error in Google Drive ingestion: {e}",
+                extra={"event": "gdrive_ingest_failure", "ingestor": "gdrive", "table": self.table_name},
+            )
             return False

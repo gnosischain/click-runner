@@ -5,6 +5,7 @@ from typing import Dict, List, Optional, Union
 
 from clickhouse_connect.driver.client import Client
 
+import observability as obs
 from .base import BaseIngestor
 from utils.s3 import list_s3_files, get_latest_file
 
@@ -67,7 +68,8 @@ class ParquetIngestor(BaseIngestor):
             if not skip_table_creation:
                 create_query = self.load_sql_file(self.create_table_sql)
                 logger.info(f"Creating table using {self.create_table_sql}")
-                self.client.command(create_query)
+                with obs.time_operation(obs.get_job_name(), "parquet", "create_table"):
+                    self.client.command(create_query)
             
             # 2. Determine S3 path(s) to ingest
             bucket = self.variables.get("S3_BUCKET", "")
@@ -83,9 +85,10 @@ class ParquetIngestor(BaseIngestor):
                 prefix = base_s3_path.rsplit("/", 1)[0]
                 logger.info(f"Looking for latest file with prefix: {prefix}")
                 
-                latest_file = get_latest_file(
-                    bucket, prefix, access_key, secret_key, region
-                )
+                with obs.time_operation(obs.get_job_name(), "parquet", "select_s3_latest"):
+                    latest_file = get_latest_file(
+                        bucket, prefix, access_key, secret_key, region
+                    )
                 if not latest_file:
                     logger.error(f"No files found in S3 path: {bucket}/{prefix}")
                     return False
@@ -108,7 +111,8 @@ class ParquetIngestor(BaseIngestor):
                 prefix = base_s3_path.rsplit("/", 1)[0]
                 logger.info(f"Looking for all files with prefix: {prefix}")
                 
-                files = list_s3_files(bucket, prefix, access_key, secret_key, region)
+                with obs.time_operation(obs.get_job_name(), "parquet", "select_s3_all"):
+                    files = list_s3_files(bucket, prefix, access_key, secret_key, region)
                 if not files:
                     logger.error(f"No files found in S3 path: {bucket}/{prefix}")
                     return False
@@ -119,6 +123,12 @@ class ParquetIngestor(BaseIngestor):
             else:
                 logger.error(f"Unknown ingestion mode: {mode}")
                 return False
+
+            obs.s3_files_selected_total.labels(
+                job=obs.get_job_name(),
+                mode=mode,
+                table=self.table_name,
+            ).inc(len(s3_paths))
             
             # 3. Generate and execute the INSERT query
             count_before = self.get_row_count(self.table_name)
@@ -126,18 +136,31 @@ class ParquetIngestor(BaseIngestor):
 
             for s3_path in s3_paths:
                 insert_query = self._generate_insert_query(s3_path, access_key, secret_key, region)
-                logger.info(f"Inserting data from {s3_path}")
-                self.client.command(insert_query)
+                logger.info(
+                    f"Inserting data from {s3_path}",
+                    extra={
+                        "event": "parquet_insert_start",
+                        "ingestor": "parquet",
+                        "table": self.table_name,
+                        "s3_path": s3_path,
+                    },
+                )
+                with obs.time_operation(obs.get_job_name(), "parquet", "insert"):
+                    self.client.command(insert_query)
 
             count_after = self.get_row_count(self.table_name)
             rows_inserted = count_after - count_before
             logger.info(f"Row count after insert in {self.table_name}: {count_after}")
             logger.info(f"Rows inserted: {rows_inserted}")
+            obs.observe_rows("parquet", self.table_name, rows_inserted)
 
             return True
             
         except Exception as e:
-            logger.error(f"Error in Parquet ingestion: {e}")
+            logger.error(
+                f"Error in Parquet ingestion: {e}",
+                extra={"event": "parquet_ingest_failure", "ingestor": "parquet", "table": self.table_name},
+            )
             return False
     
     def _generate_insert_query(

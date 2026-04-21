@@ -4,6 +4,7 @@ from typing import Dict, List, Optional
 
 from clickhouse_connect.driver.client import Client
 
+import observability as obs
 from .base import BaseIngestor
 
 logger = logging.getLogger("clickhouse_runner")
@@ -53,12 +54,19 @@ class CSVIngestor(BaseIngestor):
             if not skip_table_creation:
                 # Create table
                 create_query = self.load_sql_file(self.create_table_sql)
-                logger.info(f"Creating table using {self.create_table_sql}")
-                self.client.command(create_query)
+                logger.info(
+                    f"Creating table using {self.create_table_sql}",
+                    extra={"event": "csv_create_table_start", "ingestor": "csv"},
+                )
+                with obs.time_operation(obs.get_job_name(), "csv", "create_table"):
+                    self.client.command(create_query)
 
             # Insert data
             insert_query = self.load_sql_file(self.insert_sql)
-            logger.info(f"Inserting data using {self.insert_sql}")
+            logger.info(
+                f"Inserting data using {self.insert_sql}",
+                extra={"event": "csv_insert_start", "ingestor": "csv"},
+            )
 
             table_name = self.extract_table_name(insert_query)
             count_before = 0
@@ -66,21 +74,30 @@ class CSVIngestor(BaseIngestor):
                 count_before = self.get_row_count(table_name)
                 logger.info(f"Row count before insert in {table_name}: {count_before}")
 
-            self.client.command(insert_query)
+            with obs.time_operation(obs.get_job_name(), "csv", "insert"):
+                self.client.command(insert_query)
 
             if table_name:
                 count_after = self.get_row_count(table_name)
                 rows_inserted = count_after - count_before
                 logger.info(f"Row count after insert in {table_name}: {count_after}")
                 logger.info(f"Rows inserted: {rows_inserted}")
+                obs.observe_rows("csv", table_name, rows_inserted)
 
             # Optimize if specified
             if self.optimize_sql:
                 optimize_query = self.load_sql_file(self.optimize_sql)
-                logger.info(f"Optimizing table using {self.optimize_sql}")
-                self.client.command(optimize_query)
+                logger.info(
+                    f"Optimizing table using {self.optimize_sql}",
+                    extra={"event": "csv_optimize_start", "ingestor": "csv", "table": table_name},
+                )
+                with obs.time_operation(obs.get_job_name(), "csv", "optimize"):
+                    self.client.command(optimize_query)
 
             return True
         except Exception as e:
-            logger.error(f"Error in CSV ingestion: {e}")
+            logger.error(
+                f"Error in CSV ingestion: {e}",
+                extra={"event": "csv_ingest_failure", "ingestor": "csv"},
+            )
             return False
