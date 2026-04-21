@@ -168,6 +168,8 @@ def create_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--cow-source-table",
                        default=os.getenv("COW_SOURCE_TABLE", ""),
                        help="Fully qualified table to read owner addresses from (e.g. dbt.int_execution_cow_trades)")
+    parser.add_argument("--cow-max-pages", type=int, default=500,
+                       help="Max API pages per owner (each page = 1000 trades, default: 500 = 500k trades)")
 
     return parser
 
@@ -425,6 +427,7 @@ def run_cow_ingestor(args, client, query_vars):
         mode=args.cow_mode,
         lookback_days=args.cow_lookback_days,
         backfill_from=args.cow_backfill_from or None,
+        max_pages=args.cow_max_pages,
     )
 
     obs.update_health(table_name=table_name, source_table=source_table)

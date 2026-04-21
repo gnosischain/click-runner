@@ -33,6 +33,7 @@ class CowIngestor(BaseIngestor):
         mode: str = "daily",
         lookback_days: int = 2,
         backfill_from: Optional[str] = None,
+        max_pages: int = 500,
     ):
         super().__init__(client, variables)
         self.create_table_sql = create_table_sql
@@ -41,6 +42,7 @@ class CowIngestor(BaseIngestor):
         self.mode = mode
         self.lookback_days = lookback_days
         self.backfill_from = backfill_from
+        self.max_pages = max_pages
 
     def _get_owners(self) -> List[str]:
         """Get list of owner addresses to query from ClickHouse."""
@@ -172,7 +174,6 @@ class CowIngestor(BaseIngestor):
         self,
         owner: str,
         existing_uids: Optional[Set[str]] = None,
-        max_pages: int = 20,
     ) -> List[dict]:
         """Fetch trades for an owner from the CoW API.
 
@@ -184,7 +185,7 @@ class CowIngestor(BaseIngestor):
         page = 0
         hit_existing = False
 
-        while page < max_pages:
+        while page < self.max_pages:
             url = f"{COW_API_BASE}/trades?owner={owner}&limit={PAGE_LIMIT}&offset={offset}"
             resp = self._api_get(url)
 
@@ -231,15 +232,15 @@ class CowIngestor(BaseIngestor):
             page += 1
             time.sleep(RATE_LIMIT_DELAY)
 
-        if page >= max_pages:
+        if page >= self.max_pages:
             logger.warning(
-                f"Owner {owner} hit max pages ({max_pages}), fetched {len(all_trades)} trades",
+                f"Owner {owner} hit max pages ({self.max_pages}), fetched {len(all_trades)} trades",
                 extra={
                     "event": "cow_owner_max_pages",
                     "ingestor": "cow",
                     "mode": self.mode,
                     "owner": owner,
-                    "max_pages": max_pages,
+                    "max_pages": self.max_pages,
                     "trades": len(all_trades),
                 },
             )

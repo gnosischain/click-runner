@@ -80,6 +80,7 @@ services:
     command: >
       --ingestor=cow
       --cow-mode=backfill
+      --cow-max-pages=500
       --create-table-sql=queries/cow/create_table.sql
       --table-name=crawlers_data.cow_api_trade_fees
       --cow-source-table=dbt.int_execution_cow_trades
