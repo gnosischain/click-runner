@@ -9,20 +9,14 @@ from datetime import datetime, timedelta
 import clickhouse_connect
 from clickhouse_connect.driver.client import Client
 
+import observability as obs
 from ingestors.csv_ingestor import CSVIngestor
 from ingestors.parquet_ingestor import ParquetIngestor
 from ingestors.gdrive_ingestor import GDriveIngestor
 from ingestors.mixpanel_ingestor import MixpanelIngestor
 from ingestors.cow_ingestor import CowIngestor
 
-# Setup logging
 logger = logging.getLogger("clickhouse_runner")
-logger.setLevel(logging.INFO)
-ch = logging.StreamHandler(sys.stdout)
-ch.setLevel(logging.INFO)
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-ch.setFormatter(formatter)
-logger.addHandler(ch)
 
 def connect_clickhouse(
     host: str,
@@ -37,7 +31,12 @@ def connect_clickhouse(
     Connect to ClickHouse using clickhouse_connect and return a Client.
     Raises an exception if connection fails.
     """
-    logger.info(f"Connecting to ClickHouse at {host}:{port}, secure={secure}, verify={verify}")
+    job = obs.get_job_name()
+    start = datetime.utcnow()
+    logger.info(
+        f"Connecting to ClickHouse at {host}:{port}, secure={secure}, verify={verify}",
+        extra={"event": "clickhouse_connect_start", "database": database},
+    )
     try:
         client = clickhouse_connect.get_client(
             host=host,
@@ -50,11 +49,24 @@ def connect_clickhouse(
         )
         # Quick test
         client.command("SELECT 1")
-        logger.info("ClickHouse connection established successfully.")
+        obs.clickhouse_connected.labels(job=job, database=database).set(1)
+        obs.update_health(clickhouse_connected=True)
+        logger.info(
+            "ClickHouse connection established successfully.",
+            extra={"event": "clickhouse_connect_success", "database": database},
+        )
         return client
     except Exception as e:
-        logger.error(f"Error connecting to ClickHouse: {e}")
+        obs.clickhouse_connected.labels(job=job, database=database).set(0)
+        obs.update_health(clickhouse_connected=False, last_error=str(e))
+        logger.error(
+            f"Error connecting to ClickHouse: {e}",
+            extra={"event": "clickhouse_connect_failure", "database": database},
+        )
         raise
+    finally:
+        duration = (datetime.utcnow() - start).total_seconds()
+        obs.clickhouse_connect_duration_seconds.labels(job=job, database=database).observe(duration)
 
 def get_query_variables() -> Dict[str, str]:
     """
@@ -186,7 +198,9 @@ def run_csv_ingestor(args, client, query_vars):
         optimize_sql=optimize_sql
     )
     
-    return ingestor.ingest(skip_table_creation=args.skip_table_creation)
+    obs.update_health(table_name=ingestor.extract_table_name(ingestor.load_sql_file(insert_sql)) if insert_sql else "")
+    with obs.time_operation(obs.get_job_name(), "csv", "ingest"):
+        return ingestor.ingest(skip_table_creation=args.skip_table_creation)
 
 def run_parquet_ingestor(args, client, query_vars):
     """Run the Parquet ingestor"""
@@ -214,11 +228,13 @@ def run_parquet_ingestor(args, client, query_vars):
         table_name=table_name
     )
     
-    return ingestor.ingest(
-        skip_table_creation=args.skip_table_creation,
-        date=date,
-        mode=mode
-    )
+    obs.update_health(table_name=table_name)
+    with obs.time_operation(obs.get_job_name(), "parquet", "ingest"):
+        return ingestor.ingest(
+            skip_table_creation=args.skip_table_creation,
+            date=date,
+            mode=mode
+        )
 
 def run_gdrive_ingestor(args, client, query_vars):
     """Run the Google Drive CSV ingestor"""
@@ -272,7 +288,9 @@ def run_gdrive_ingestor(args, client, query_vars):
         max_rows=max_rows
     )
     
-    return ingestor.ingest(skip_table_creation=args.skip_table_creation)
+    obs.update_health(table_name=table_name)
+    with obs.time_operation(obs.get_job_name(), "gdrive", "ingest"):
+        return ingestor.ingest(skip_table_creation=args.skip_table_creation)
 
 def run_query_ingestor(args, client, query_vars):
     """Run plain SQL queries from files"""
@@ -298,7 +316,8 @@ def run_query_ingestor(args, client, query_vars):
             logger.error(f"Query file not found: {file}")
             return False
     
-    return ingestor.execute_queries(queries)
+    with obs.time_operation(obs.get_job_name(), "query", "ingest"):
+        return ingestor.execute_queries(queries)
 
 def run_mixpanel_ingestor(args, client, query_vars):
     """Run the Mixpanel raw event export ingestor"""
@@ -343,7 +362,9 @@ def run_mixpanel_ingestor(args, client, query_vars):
         region=args.mixpanel_region,
     )
 
-    return ingestor.ingest(skip_table_creation=args.skip_table_creation)
+    obs.update_health(table_name=table_name)
+    with obs.time_operation(obs.get_job_name(), "mixpanel", "ingest"):
+        return ingestor.ingest(skip_table_creation=args.skip_table_creation)
 
 
 def run_dune_execute_only(args, client, query_vars):
@@ -368,11 +389,20 @@ def run_dune_execute_only(args, client, query_vars):
                     "DUNE_EXECUTE_ONLY_QUERY_ID": query_id,
                 },
             )
-            logger.info(f"Triggering execute-only Dune query {query_id}")
-            client.command(sql)
+            logger.info(
+                f"Triggering execute-only Dune query {query_id}",
+                extra={"event": "dune_execute_only_start", "query_id": query_id},
+            )
+            with obs.time_operation(obs.get_job_name(), "dune-execute-only", "trigger_query"):
+                client.command(sql)
+            obs.dune_queries_triggered_total.labels(job=obs.get_job_name(), result="success").inc()
         except Exception as e:
             success = False
-            logger.error(f"Failed execute-only Dune query {query_id}: {e}")
+            obs.dune_queries_triggered_total.labels(job=obs.get_job_name(), result="failure").inc()
+            logger.error(
+                f"Failed execute-only Dune query {query_id}: {e}",
+                extra={"event": "dune_execute_only_failure", "query_id": query_id},
+            )
 
     return success
 
@@ -397,55 +427,94 @@ def run_cow_ingestor(args, client, query_vars):
         backfill_from=args.cow_backfill_from or None,
     )
 
-    return ingestor.ingest(skip_table_creation=args.skip_table_creation)
+    obs.update_health(table_name=table_name, source_table=source_table)
+    with obs.time_operation(obs.get_job_name(), "cow", "ingest"):
+        return ingestor.ingest(skip_table_creation=args.skip_table_creation)
 
 
 def main():
     """Main entry point"""
+    obs.setup_logging()
+    if obs.is_enabled():
+        try:
+            obs.start_metrics_server(int(os.getenv("OBSERVABILITY_PORT", "9090")))
+        except Exception as e:
+            logger.warning(f"Failed to start metrics server: {e}")
+
     parser = create_argparser()
     args = parser.parse_args()
-    
-    # Convert string booleans to actual booleans
-    secure = args.secure.lower() in ("true", "1", "yes")
-    verify = args.verify.lower() not in ("false", "0", "no")  # default True
-    
-    # Get variables for SQL queries from environment
-    query_variables = get_query_variables()
-    
-    # Connect to ClickHouse
-    client = connect_clickhouse(
-        host=args.host,
-        port=args.port,
-        user=args.user,
-        password=args.password,
+    job = obs.get_job_name()
+    start_time = datetime.utcnow()
+    success = False
+    exit_code = 1
+
+    obs.runs_started_total.labels(job=job, ingestor=args.ingestor).inc()
+    obs.active_runs.labels(job=job, ingestor=args.ingestor).inc()
+    obs.update_health(
+        status="running",
+        clickhouse_connected=False,
+        ingestor=args.ingestor,
+        job_name=job,
         database=args.db,
-        secure=secure,
-        verify=verify
+        table_name=args.table_name or os.getenv("CH_TABLE_NAME", ""),
+        started_at=obs.utc_now(),
+        finished_at="",
+        last_error="",
     )
     
-    # Run the appropriate ingestor
-    success = False
-    if args.ingestor == "csv":
-        success = run_csv_ingestor(args, client, query_variables)
-    elif args.ingestor == "parquet":
-        success = run_parquet_ingestor(args, client, query_variables)
-    elif args.ingestor == "gdrive":
-        success = run_gdrive_ingestor(args, client, query_variables)
-    elif args.ingestor == "mixpanel":
-        success = run_mixpanel_ingestor(args, client, query_variables)
-    elif args.ingestor == "cow":
-        success = run_cow_ingestor(args, client, query_variables)
-    elif args.ingestor == "dune-execute-only":
-        success = run_dune_execute_only(args, client, query_variables)
-    else:  # "query"
-        success = run_query_ingestor(args, client, query_variables)
-    
-    if success:
-        logger.info("All operations completed successfully!")
-        sys.exit(0)
-    else:
-        logger.error("Operation failed")
-        sys.exit(1)
+    try:
+        # Convert string booleans to actual booleans
+        secure = args.secure.lower() in ("true", "1", "yes")
+        verify = args.verify.lower() not in ("false", "0", "no")  # default True
+        
+        # Get variables for SQL queries from environment
+        query_variables = get_query_variables()
+        
+        # Connect to ClickHouse
+        client = connect_clickhouse(
+            host=args.host,
+            port=args.port,
+            user=args.user,
+            password=args.password,
+            database=args.db,
+            secure=secure,
+            verify=verify
+        )
+        
+        # Run the appropriate ingestor
+        if args.ingestor == "csv":
+            success = run_csv_ingestor(args, client, query_variables)
+        elif args.ingestor == "parquet":
+            success = run_parquet_ingestor(args, client, query_variables)
+        elif args.ingestor == "gdrive":
+            success = run_gdrive_ingestor(args, client, query_variables)
+        elif args.ingestor == "mixpanel":
+            success = run_mixpanel_ingestor(args, client, query_variables)
+        elif args.ingestor == "cow":
+            success = run_cow_ingestor(args, client, query_variables)
+        elif args.ingestor == "dune-execute-only":
+            success = run_dune_execute_only(args, client, query_variables)
+        else:  # "query"
+            success = run_query_ingestor(args, client, query_variables)
+
+        if success:
+            logger.info("All operations completed successfully!", extra={"event": "run_success"})
+            exit_code = 0
+        else:
+            logger.error("Operation failed", extra={"event": "run_failure"})
+    except Exception as e:
+        success = False
+        obs.update_health(last_error=str(e))
+        logger.exception("Unhandled operation error", extra={"event": "run_exception"})
+    finally:
+        result = "success" if success else "failure"
+        duration = (datetime.utcnow() - start_time).total_seconds()
+        obs.runs_completed_total.labels(job=job, ingestor=args.ingestor, result=result).inc()
+        obs.run_duration_seconds.labels(job=job, ingestor=args.ingestor).observe(duration)
+        obs.active_runs.labels(job=job, ingestor=args.ingestor).dec()
+        obs.update_health(status=result, finished_at=obs.utc_now())
+
+    sys.exit(exit_code)
 
 if __name__ == "__main__":
     main()

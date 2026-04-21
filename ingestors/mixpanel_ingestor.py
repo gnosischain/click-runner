@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Tuple
 import requests
 from clickhouse_connect.driver.client import Client
 
+import observability as obs
 from .base import BaseIngestor
 
 logger = logging.getLogger("clickhouse_runner")
@@ -103,11 +104,13 @@ class MixpanelIngestor(BaseIngestor):
         if not skip_table_creation:
             try:
                 create_events_sql = self.load_sql_file(self.create_table_sql)
-                self.client.command(create_events_sql)
+                with obs.time_operation(obs.get_job_name(), "mixpanel", "create_events_table"):
+                    self.client.command(create_events_sql)
                 logger.info("Events table created/verified.")
 
                 create_state_sql = self.load_sql_file(self.create_state_sql)
-                self.client.command(create_state_sql)
+                with obs.time_operation(obs.get_job_name(), "mixpanel", "create_state_table"):
+                    self.client.command(create_state_sql)
                 logger.info("State table created/verified.")
             except Exception as e:
                 logger.error(f"Failed to create tables: {e}")
@@ -141,7 +144,8 @@ class MixpanelIngestor(BaseIngestor):
                 continue
 
             logger.info(f"Processing date: {date_str}")
-            success, should_mark, rows = self._fetch_day(date_str)
+            with obs.time_operation(obs.get_job_name(), "mixpanel", "fetch_day"):
+                success, should_mark, rows = self._fetch_day(date_str)
             if not success:
                 logger.error(f"Failed to process date {date_str}. Stopping.")
                 return False
@@ -370,14 +374,15 @@ class MixpanelIngestor(BaseIngestor):
         if where:
             params["where"] = where
 
-        response = requests.get(
-            self.export_url,
-            params=params,
-            auth=(self.sa_username, self.sa_secret),
-            headers={"Accept-Encoding": "gzip"},
-            stream=True,
-            timeout=300,
-        )
+        with obs.time_operation(obs.get_job_name(), "mixpanel", "api_export"):
+            response = requests.get(
+                self.export_url,
+                params=params,
+                auth=(self.sa_username, self.sa_secret),
+                headers={"Accept-Encoding": "gzip"},
+                stream=True,
+                timeout=300,
+            )
         logger.info(f"API response status: {response.status_code}")
         if response.status_code != 200:
             logger.error(f"API error response: {response.text[:500]}")
@@ -444,11 +449,17 @@ class MixpanelIngestor(BaseIngestor):
         # Insert in batches
         for i in range(0, len(rows), INSERT_BATCH_SIZE):
             batch = rows[i : i + INSERT_BATCH_SIZE]
-            self.client.insert(
-                self.table_name,
-                batch,
-                column_names=column_names,
-            )
+            with obs.time_operation(obs.get_job_name(), "mixpanel", "insert_batch"):
+                self.client.insert(
+                    self.table_name,
+                    batch,
+                    column_names=column_names,
+                )
+            obs.mixpanel_events_inserted_total.labels(
+                job=obs.get_job_name(),
+                table=self.table_name,
+            ).inc(len(batch))
+            obs.observe_rows("mixpanel", self.table_name, len(batch))
             logger.info(
                 f"  Batch inserted {len(batch)} rows "
                 f"({i + len(batch)}/{len(rows)})"
