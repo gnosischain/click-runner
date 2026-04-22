@@ -8,6 +8,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY run_queries.py .
+COPY observability.py .
 COPY __init__.py .
 COPY ingestors/ ./ingestors/
 COPY utils/ ./utils/
