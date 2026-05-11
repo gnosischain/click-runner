@@ -1,0 +1,1 @@
+OPTIMIZE TABLE crawlers_data.circles_blacklisted FINAL

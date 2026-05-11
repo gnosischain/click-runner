@@ -86,8 +86,33 @@ class BaseIngestor(ABC):
         """
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"SQL file not found: {file_path}")
-        
+
         with open(file_path, "r", encoding="utf-8") as f:
             content = f.read()
-        
+
         return self.replace_variables(content)
+
+
+class QueryIngestor(BaseIngestor):
+    """
+    Concrete ingestor for the `--ingestor=query` code path: load a list of
+    SQL files, render template variables, and execute them sequentially
+    against ClickHouse. Each file must contain a single statement (passed
+    to `client.command`); chain files via the comma-separated `--queries`
+    argument when you need ordered multi-statement flows (e.g.
+    create → truncate → insert → optimize).
+    """
+
+    def __init__(self, client: Client, variables: Dict[str, str], query_files: List[str]):
+        super().__init__(client, variables)
+        self.query_files = query_files
+
+    def ingest(self, **kwargs) -> bool:
+        queries = []
+        for file in self.query_files:
+            try:
+                queries.append(self.load_sql_file(file))
+            except FileNotFoundError:
+                logger.error(f"Query file not found: {file}")
+                return False
+        return self.execute_queries(queries)

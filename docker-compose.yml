@@ -318,6 +318,32 @@ services:
       --create-table-sql=queries/dune/labels/create_table.sql
       --insert-sql=queries/dune/labels/insert_full.sql
 
+  # Circles v2 bot/sybil blacklist — daily full-replace from the aboutcircles API
+  circles-blacklist-daily-ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: circles-blacklist-daily-ingestor
+    volumes:
+      - ./queries:/app/queries
+    environment:
+      CH_HOST: ${CH_DB_HOST}
+      CH_PORT: ${CH_NATIVE_PORT}
+      CH_USER: ${CH_USER}
+      CH_PASSWORD: ${CH_PASSWORD}
+      CH_DB: ${CH_DB}
+      CH_SECURE: ${CH_SECURE}
+      CH_VERIFY: "False"
+
+      # Blacklist source URL. Override via the CIRCLES_BLACKLIST_URL env var
+      # (e.g. in .env) when pointing at a staging endpoint. Default mirrors
+      # the production aboutcircles bot-analytics API used by the Dune
+      # circles-v2-kpis dashboard.
+      CH_QUERY_VAR_CIRCLES_BLACKLIST_URL: ${CIRCLES_BLACKLIST_URL:-https://squid-app-3gxnl.ondigitalocean.app/aboutcircles-advanced-analytics2/bot-analytics/blacklist?include_reason=true&v2_only=true&limit=10000}
+    command: >
+      --ingestor=query
+      --queries=queries/circles/blacklist/create_table.sql,queries/circles/blacklist/truncate.sql,queries/circles/blacklist/insert.sql,queries/circles/blacklist/optimize.sql
+
   # Dune Prices Ingestion Services
   dune-prices-daily-ingestor:
     build:
