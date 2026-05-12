@@ -296,30 +296,19 @@ def run_gdrive_ingestor(args, client, query_vars):
 
 def run_query_ingestor(args, client, query_vars):
     """Run plain SQL queries from files"""
-    from ingestors.base import BaseIngestor
-    
+    from ingestors.base import QueryIngestor
+
     # Get queries from args or env var
     queries_str = args.queries or os.getenv("CH_QUERIES", "")
     if not queries_str:
         logger.error("No queries specified")
         return False
-    
+
     query_files = [q.strip() for q in queries_str.split(",") if q.strip()]
-    
-    # Create a basic ingestor for executing the queries
-    ingestor = BaseIngestor(client, query_vars)
-    queries = []
-    
-    for file in query_files:
-        try:
-            sql = ingestor.load_sql_file(file)
-            queries.append(sql)
-        except FileNotFoundError:
-            logger.error(f"Query file not found: {file}")
-            return False
-    
+
+    ingestor = QueryIngestor(client, query_vars, query_files)
     with obs.time_operation(obs.get_job_name(), "query", "ingest"):
-        return ingestor.execute_queries(queries)
+        return ingestor.ingest()
 
 def run_mixpanel_ingestor(args, client, query_vars):
     """Run the Mixpanel raw event export ingestor"""
