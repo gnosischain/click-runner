@@ -86,7 +86,9 @@ class CowIngestor(BaseIngestor):
 
     def _get_existing_order_uids(self, owners: List[str]) -> Set[str]:
         """Get order_uids already in the table for the given owners.
-        Only used in daily mode to skip already-ingested trades."""
+        Only used in daily mode to skip already-ingested trades.
+        Scoped to the last 14 days so the query stays small regardless of
+        how much historical data accumulates per owner."""
         if not owners:
             return set()
 
@@ -95,6 +97,7 @@ class CowIngestor(BaseIngestor):
             SELECT DISTINCT order_uid
             FROM {self.table_name}
             WHERE owner IN ({owner_list})
+              AND ingested_at >= now() - INTERVAL 14 DAY
         """
         try:
             with obs.time_operation(obs.get_job_name(), "cow", "existing_uid_lookup"):
