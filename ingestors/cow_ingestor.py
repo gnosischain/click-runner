@@ -1,7 +1,7 @@
 import json
 import logging
 import time
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 import requests
 from clickhouse_connect.driver.client import Client
@@ -33,7 +33,7 @@ class CowIngestor(BaseIngestor):
         mode: str = "daily",
         lookback_days: int = 2,
         backfill_from: Optional[str] = None,
-        max_pages: int = 500,
+        max_pages: Optional[int] = None,
     ):
         super().__init__(client, variables)
         self.create_table_sql = create_table_sql
@@ -42,7 +42,9 @@ class CowIngestor(BaseIngestor):
         self.mode = mode
         self.lookback_days = lookback_days
         self.backfill_from = backfill_from
-        self.max_pages = max_pages
+        # Daily: cap at 20 pages (new owners only need recent trades; backfill handles history).
+        # Backfill: 500 pages to fetch full history.
+        self.max_pages = max_pages if max_pages is not None else (20 if mode == "daily" else 500)
 
     def _get_owners(self) -> List[str]:
         """Get list of owner addresses to query from ClickHouse."""
@@ -177,22 +179,26 @@ class CowIngestor(BaseIngestor):
         self,
         owner: str,
         existing_uids: Optional[Set[str]] = None,
-    ) -> List[dict]:
+    ) -> Tuple[List[dict], bool]:
         """Fetch trades for an owner from the CoW API.
 
         API returns newest trades first. In daily mode, stops paginating
         once it hits trades already in the DB. In backfill mode, fetches everything.
+        Returns (trades, api_failed) where api_failed is True if any page
+        exhausted all retries (e.g. sustained 429s).
         """
         all_trades = []
         offset = 0
         page = 0
         hit_existing = False
+        api_failed = False
 
         while page < self.max_pages:
             url = f"{COW_API_BASE}/trades?owner={owner}&limit={PAGE_LIMIT}&offset={offset}"
             resp = self._api_get(url)
 
             if resp is None:
+                api_failed = True
                 break
             if resp.status_code == 404:
                 break
@@ -252,7 +258,7 @@ class CowIngestor(BaseIngestor):
             job=obs.get_job_name(),
             mode=self.mode,
         ).inc(len(all_trades))
-        return all_trades
+        return all_trades, api_failed
 
     def _parse_fees(self, trade: dict) -> tuple:
         """Extract fee info from a single trade response.
@@ -350,6 +356,7 @@ class CowIngestor(BaseIngestor):
             total_trades = 0
             skipped_owners = 0
             failed_owners = 0
+            consecutive_api_failures = 0
 
             for i, owner in enumerate(owners):
                 if i > 0 and i % 50 == 0:
@@ -369,14 +376,29 @@ class CowIngestor(BaseIngestor):
                     )
 
                 owner_start = time.monotonic()
-                trades = self._fetch_trades_for_owner(owner, existing_uids)
+                trades, api_failed = self._fetch_trades_for_owner(owner, existing_uids)
                 obs.cow_owner_duration_seconds.labels(
                     job=obs.get_job_name(),
                     mode=self.mode,
                 ).observe(time.monotonic() - owner_start)
-                if trades is None:
+
+                if api_failed:
+                    consecutive_api_failures += 1
                     failed_owners += 1
-                    continue
+                    if consecutive_api_failures >= 10:
+                        logger.error(
+                            f"Aborting: API rate-limiting all requests after {consecutive_api_failures} consecutive failures",
+                            extra={
+                                "event": "cow_abort_rate_limited",
+                                "ingestor": "cow",
+                                "mode": self.mode,
+                                "table": self.table_name,
+                                "consecutive_failures": consecutive_api_failures,
+                            },
+                        )
+                        return False
+                else:
+                    consecutive_api_failures = 0
 
                 if len(trades) == 0:
                     skipped_owners += 1
