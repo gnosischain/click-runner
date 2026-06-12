@@ -15,5 +15,8 @@ CREATE TABLE IF NOT EXISTS {{COW_DATABASE}}.cow_api_trade_fees
     `ingested_at`      DateTime DEFAULT now()
 )
 ENGINE = ReplacingMergeTree(ingested_at)
-ORDER BY (order_uid)
+-- One row per fill: orders can partially fill across multiple trades, each
+-- with its own executedProtocolFees. Keying by order_uid alone collapses
+-- fills and silently discards their fees.
+ORDER BY (order_uid, tx_hash, log_index)
 SETTINGS allow_nullable_key = 1;

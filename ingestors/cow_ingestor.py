@@ -15,12 +15,24 @@ COW_API_BASE = "https://api.cow.fi/xdai/api/v2"
 PAGE_LIMIT = 1000
 RATE_LIMIT_DELAY = 0.6  # ~100 req/min
 MAX_RETRIES = 2
+# Repair mode: owners with at least this many missing orders are re-fetched
+# per-owner (1000 fills/request); the rest are fetched per-orderUid.
+REPAIR_OWNER_THRESHOLD = 50
 
 
 class CowIngestor(BaseIngestor):
     """
     Ingestor for CoW Protocol trade fee data from the CoW API.
-    Queries per-owner and extracts executedProtocolFees for each trade.
+    Extracts executedProtocolFees per trade (per fill). Modes:
+      daily    - owners active in the last lookback_days, newest-first with
+                 early-stop on already-ingested fills
+      backfill - full history for all owners (optionally bounded by
+                 backfill_from)
+      repair   - anti-join on-chain fills (source_table) against the target
+                 table's (order_uid, tx_hash, log_index) keys and fetch each
+                 order with missing fills via /trades?orderUid=. One request
+                 returns all fills of an order. Use after a copy/migration or
+                 to verify completeness; idempotent.
     """
 
     def __init__(
@@ -31,7 +43,10 @@ class CowIngestor(BaseIngestor):
         table_name: str,
         source_table: str,
         mode: str = "daily",
-        lookback_days: int = 2,
+        # 7 days tolerates multi-day job failures and upstream staleness of the
+        # owner-source table (dbt.int_execution_cow_trades); a 2-day window
+        # silently yields zero owners whenever that table lags > 2 days.
+        lookback_days: int = 7,
         backfill_from: Optional[str] = None,
         max_pages: Optional[int] = None,
     ):
@@ -86,9 +101,12 @@ class CowIngestor(BaseIngestor):
         )
         return owners
 
-    def _get_existing_order_uids(self, owners: List[str]) -> Set[str]:
-        """Get order_uids already in the table for the given owners.
-        Only used in daily mode to skip already-ingested trades.
+    def _get_existing_trade_keys(self, owners: List[str]) -> Set[Tuple[str, str, int]]:
+        """Get (order_uid, tx_hash, log_index) keys already in the table for the
+        given owners. Only used in daily mode to skip already-ingested trades.
+        Keyed per fill, not per order: partially-fillable orders produce multiple
+        trades sharing an order_uid, each with its own fees, so skipping by
+        order_uid alone would drop new fills of known orders.
         Scoped to the last 14 days so the query stays small regardless of
         how much historical data accumulates per owner."""
         if not owners:
@@ -96,7 +114,7 @@ class CowIngestor(BaseIngestor):
 
         owner_list = ", ".join(f"'{o}'" for o in owners)
         sql = f"""
-            SELECT DISTINCT order_uid
+            SELECT DISTINCT order_uid, tx_hash, log_index
             FROM {self.table_name}
             WHERE owner IN ({owner_list})
               AND ingested_at >= now() - INTERVAL 14 DAY
@@ -104,18 +122,21 @@ class CowIngestor(BaseIngestor):
         try:
             with obs.time_operation(obs.get_job_name(), "cow", "existing_uid_lookup"):
                 result = self.client.query(sql)
-            uids = {row[0] for row in result.result_rows}
+            keys = {
+                (row[0].lower(), row[1].lower(), int(row[2]))
+                for row in result.result_rows
+            }
             logger.info(
-                f"Found {len(uids)} existing order_uids to skip",
+                f"Found {len(keys)} existing trade keys to skip",
                 extra={
                     "event": "cow_existing_uids_loaded",
                     "ingestor": "cow",
                     "mode": self.mode,
                     "table": self.table_name,
-                    "existing_order_uids": len(uids),
+                    "existing_trade_keys": len(keys),
                 },
             )
-            return uids
+            return keys
         except Exception:
             return set()
 
@@ -175,10 +196,104 @@ class CowIngestor(BaseIngestor):
                     return None
         return None
 
+    def _missing_fills_sql(self, select: str, group_by: str = "") -> str:
+        """Anti-join of on-chain fills (source_table) against the target
+        table's (order_uid, tx_hash, log_index) keys, so orders whose fills
+        were only partially ingested (e.g. collapsed by an order-keyed schema)
+        are picked up alongside fully missing orders."""
+        date_filter = ""
+        if self.backfill_from:
+            date_filter = f"AND block_timestamp >= toDate('{self.backfill_from}')"
+        return f"""
+            SELECT {select}
+            FROM (
+                SELECT taker, order_uid, lower(transaction_hash) AS tx_hash, log_index
+                FROM {self.source_table}
+                WHERE order_uid IS NOT NULL AND order_uid != ''
+                  {date_filter}
+            ) t
+            LEFT ANTI JOIN (
+                SELECT order_uid, lower(tx_hash) AS tx_hash, log_index
+                FROM {self.table_name}
+            ) f
+            ON  f.order_uid = t.order_uid
+            AND f.tx_hash   = t.tx_hash
+            AND f.log_index = t.log_index
+            {group_by}
+        """
+
+    def _get_missing_by_owner(self) -> Dict[str, int]:
+        """Owners of missing fills, with their missing-order counts."""
+        sql = self._missing_fills_sql(
+            "t.taker, uniqExact(t.order_uid) AS missing_orders",
+            "GROUP BY t.taker",
+        )
+        with obs.time_operation(obs.get_job_name(), "cow", "missing_owner_lookup"):
+            result = self.client.query(sql)
+        return {row[0]: int(row[1]) for row in result.result_rows}
+
+    def _get_missing_order_uids(self) -> List[str]:
+        """order_uids that still have fills missing from the target table."""
+        sql = self._missing_fills_sql("DISTINCT t.order_uid")
+        with obs.time_operation(obs.get_job_name(), "cow", "missing_order_lookup"):
+            result = self.client.query(sql)
+        order_uids = [row[0] for row in result.result_rows]
+        logger.info(
+            f"Found {len(order_uids)} orders with missing fills (repair mode)",
+            extra={
+                "event": "cow_missing_orders_discovered",
+                "ingestor": "cow",
+                "mode": self.mode,
+                "table": self.table_name,
+                "source_table": self.source_table,
+                "orders": len(order_uids),
+            },
+        )
+        return order_uids
+
+    def _fetch_trades_for_order(self, order_uid: str) -> Tuple[List[dict], bool]:
+        """Fetch all fills of a single order from the CoW API.
+        Returns (trades, api_failed); api_failed is True if retries were
+        exhausted (e.g. sustained 429s)."""
+        url = f"{COW_API_BASE}/trades?orderUid={order_uid}&limit={PAGE_LIMIT}"
+        resp = self._api_get(url)
+        if resp is None:
+            return [], True
+        if resp.status_code == 404:
+            return [], False
+        try:
+            resp.raise_for_status()
+            trades = resp.json() or []
+        except (requests.RequestException, ValueError) as e:
+            logger.error(
+                f"API error for order {order_uid[:18]}...: {e}",
+                extra={
+                    "event": "cow_order_api_error",
+                    "ingestor": "cow",
+                    "mode": self.mode,
+                    "order_uid": order_uid,
+                },
+            )
+            return [], False
+        obs.cow_trades_fetched_total.labels(
+            job=obs.get_job_name(),
+            mode=self.mode,
+        ).inc(len(trades))
+        return trades, False
+
+    @staticmethod
+    def _trade_key(trade: dict) -> Tuple[str, str, int]:
+        """Per-fill identity of a trade: (order_uid, tx_hash, log_index)."""
+        return (
+            trade.get("orderUid", "").lower(),
+            trade.get("txHash", "").lower(),
+            int(trade.get("logIndex") or 0),
+        )
+
     def _fetch_trades_for_owner(
         self,
         owner: str,
-        existing_uids: Optional[Set[str]] = None,
+        existing_keys: Optional[Set[Tuple[str, str, int]]] = None,
     ) -> Tuple[List[dict], bool]:
         """Fetch trades for an owner from the CoW API.
 
@@ -221,10 +336,10 @@ class CowIngestor(BaseIngestor):
             if not trades:
                 break
 
-            if existing_uids is not None:
+            if existing_keys is not None:
                 new_trades = []
                 for t in trades:
-                    if t.get("orderUid", "") in existing_uids:
+                    if self._trade_key(t) in existing_keys:
                         hit_existing = True
                     else:
                         new_trades.append(t)
@@ -259,6 +374,30 @@ class CowIngestor(BaseIngestor):
             mode=self.mode,
         ).inc(len(all_trades))
         return all_trades, api_failed
+
+    COLUMNS = [
+        "order_uid", "tx_hash", "block_number", "log_index",
+        "owner", "sell_token", "buy_token", "sell_amount",
+        "buy_amount", "fee_token", "fee_amount", "fee_policies",
+    ]
+
+    def _trade_to_row(self, trade: dict) -> list:
+        """Map an API trade response entry to a ClickHouse row (see COLUMNS)."""
+        fee_token, fee_amount, fee_policies = self._parse_fees(trade)
+        return [
+            trade.get("orderUid", ""),
+            trade.get("txHash", ""),
+            trade.get("blockNumber", 0),
+            trade.get("logIndex", 0),
+            trade.get("owner", ""),
+            trade.get("sellToken", ""),
+            trade.get("buyToken", ""),
+            trade.get("sellAmount", "0"),
+            trade.get("buyAmount", "0"),
+            fee_token,
+            fee_amount,
+            fee_policies,
+        ]
 
     def _parse_fees(self, trade: dict) -> tuple:
         """Extract fee info from a single trade response.
@@ -307,12 +446,207 @@ class CowIngestor(BaseIngestor):
             },
         )
 
+    def _ingest_missing_orders(self, count_before: int) -> bool:
+        """Repair mode, two phases:
+        1. Owners with >= REPAIR_OWNER_THRESHOLD missing orders are re-fetched
+           per-owner (full history, 1000 fills per request) — far cheaper than
+           per-order for heavy traders.
+        2. The missing set is re-computed; whatever remains is fetched
+           per-orderUid (one request returns all fills of the order).
+        Already-present fills come back too and dedupe via the
+        ReplacingMergeTree key, so this is idempotent and safe to rerun."""
+        by_owner = self._get_missing_by_owner()
+        if not by_owner:
+            logger.info("No orders with missing fills found")
+            return True
+
+        big_owners = sorted(
+            (o for o, n in by_owner.items() if n >= REPAIR_OWNER_THRESHOLD),
+            key=lambda o: -by_owner[o],
+        )
+        logger.info(
+            f"Repair: {len(by_owner)} owners have missing fills; "
+            f"{len(big_owners)} owners with >= {REPAIR_OWNER_THRESHOLD} missing orders "
+            f"will be re-fetched per-owner first",
+            extra={
+                "event": "cow_repair_plan",
+                "ingestor": "cow",
+                "mode": self.mode,
+                "table": self.table_name,
+                "owners_total": len(by_owner),
+                "owners_per_owner_fetch": len(big_owners),
+            },
+        )
+
+        if big_owners and not self._repair_fetch_owners(big_owners):
+            return False
+
+        order_uids = self._get_missing_order_uids()
+        if not order_uids:
+            logger.info("No orders left to repair after per-owner phase")
+            return True
+
+        batch = []
+        batch_size = 500
+        total_trades = 0
+        empty_orders = 0
+        failed_orders = 0
+        consecutive_api_failures = 0
+
+        for i, order_uid in enumerate(order_uids):
+            if i > 0 and i % 200 == 0:
+                logger.info(
+                    f"Progress: {i}/{len(order_uids)} orders, {total_trades} fills inserted, "
+                    f"{empty_orders} not on API, {failed_orders} failed",
+                    extra={
+                        "event": "cow_repair_progress",
+                        "ingestor": "cow",
+                        "mode": self.mode,
+                        "table": self.table_name,
+                        "orders_processed": i,
+                        "orders_total": len(order_uids),
+                        "trades": total_trades,
+                        "orders_empty": empty_orders,
+                        "orders_failed": failed_orders,
+                    },
+                )
+
+            trades, api_failed = self._fetch_trades_for_order(order_uid)
+
+            if api_failed:
+                consecutive_api_failures += 1
+                failed_orders += 1
+                if consecutive_api_failures >= 10:
+                    if batch:
+                        self._insert_batch(batch, self.COLUMNS)
+                        total_trades += len(batch)
+                        batch = []
+                    logger.error(
+                        f"Aborting: API rate-limiting all requests after {consecutive_api_failures} consecutive failures",
+                        extra={
+                            "event": "cow_abort_rate_limited",
+                            "ingestor": "cow",
+                            "mode": self.mode,
+                            "table": self.table_name,
+                            "consecutive_failures": consecutive_api_failures,
+                        },
+                    )
+                    return False
+            else:
+                consecutive_api_failures = 0
+
+            if not trades:
+                if not api_failed:
+                    empty_orders += 1
+                time.sleep(RATE_LIMIT_DELAY)
+                continue
+
+            if len(trades) >= PAGE_LIMIT:
+                logger.warning(
+                    f"Order {order_uid[:18]}... returned {len(trades)} fills (page limit) — possible truncation",
+                    extra={
+                        "event": "cow_order_page_limit",
+                        "ingestor": "cow",
+                        "mode": self.mode,
+                        "order_uid": order_uid,
+                        "trades": len(trades),
+                    },
+                )
+
+            for trade in trades:
+                batch.append(self._trade_to_row(trade))
+
+            if len(batch) >= batch_size:
+                self._insert_batch(batch, self.COLUMNS)
+                total_trades += len(batch)
+                batch = []
+
+            time.sleep(RATE_LIMIT_DELAY)
+
+        if batch:
+            self._insert_batch(batch, self.COLUMNS)
+            total_trades += len(batch)
+
+        count_after = self.get_row_count(self.table_name)
+        logger.info(f"Repair done. Fills inserted: {total_trades}")
+        logger.info(f"Orders not found on API: {empty_orders}")
+        logger.info(f"Failed orders: {failed_orders}")
+        logger.info(f"Row count after: {count_after} (delta: {count_after - count_before})")
+        obs.cow_owners_total.labels(
+            job=obs.get_job_name(),
+            mode=self.mode,
+            result="failed",
+        ).inc(failed_orders)
+        return True
+
+    def _repair_fetch_owners(self, owners: List[str]) -> bool:
+        """Phase 1 of repair: full per-owner re-fetch for heavy owners.
+        No early-stop — their missing fills sit deep in history."""
+        batch = []
+        batch_size = 500
+        total_trades = 0
+        failed_owners = 0
+        consecutive_api_failures = 0
+
+        for i, owner in enumerate(owners):
+            logger.info(
+                f"  [owner {i+1}/{len(owners)}] re-fetching full history of {owner[:10]}...",
+                extra={
+                    "event": "cow_repair_owner_fetch",
+                    "ingestor": "cow",
+                    "mode": self.mode,
+                    "table": self.table_name,
+                    "owner": owner,
+                    "owner_index": i + 1,
+                    "owners_total": len(owners),
+                },
+            )
+            trades, api_failed = self._fetch_trades_for_owner(owner, None)
+
+            if api_failed:
+                consecutive_api_failures += 1
+                failed_owners += 1
+                if consecutive_api_failures >= 10:
+                    if batch:
+                        self._insert_batch(batch, self.COLUMNS)
+                        batch = []
+                    logger.error(
+                        f"Aborting: API rate-limiting all requests after {consecutive_api_failures} consecutive failures",
+                        extra={
+                            "event": "cow_abort_rate_limited",
+                            "ingestor": "cow",
+                            "mode": self.mode,
+                            "table": self.table_name,
+                            "consecutive_failures": consecutive_api_failures,
+                        },
+                    )
+                    return False
+            else:
+                consecutive_api_failures = 0
+
+            for trade in trades:
+                batch.append(self._trade_to_row(trade))
+
+            while len(batch) >= batch_size:
+                self._insert_batch(batch[:batch_size], self.COLUMNS)
+                total_trades += min(batch_size, len(batch))
+                batch = batch[batch_size:]
+
+            time.sleep(RATE_LIMIT_DELAY)
+
+        if batch:
+            self._insert_batch(batch, self.COLUMNS)
+            total_trades += len(batch)
+
+        logger.info(f"Per-owner repair phase done. Fills inserted: {total_trades}, failed owners: {failed_owners}")
+        return True
+
     def ingest(self, skip_table_creation: bool = False, **kwargs) -> bool:
         """
         Execute the CoW fee ingestion:
         1. Create table (if needed)
         2. Get owner list from ClickHouse
-        3. Daily mode: load existing order_uids to skip duplicates
+        3. Daily mode: load existing (order_uid, tx_hash, log_index) keys to skip duplicates
         4. For each owner, fetch trades from CoW API (stop early if known)
         5. Extract fees and insert into ClickHouse
         """
@@ -335,21 +669,20 @@ class CowIngestor(BaseIngestor):
             count_before = self.get_row_count(self.table_name)
             logger.info(f"Row count before: {count_before}")
 
+            if self.mode == "repair":
+                return self._ingest_missing_orders(count_before)
+
             owners = self._get_owners()
             if not owners:
                 logger.warning("No owners found to query")
                 return True
 
-            # Daily mode: load known uids so we stop early per owner
-            existing_uids = None
+            # Daily mode: load known per-fill keys so we stop early per owner
+            existing_keys = None
             if self.mode == "daily":
-                existing_uids = self._get_existing_order_uids(owners)
+                existing_keys = self._get_existing_trade_keys(owners)
 
-            columns = [
-                "order_uid", "tx_hash", "block_number", "log_index",
-                "owner", "sell_token", "buy_token", "sell_amount",
-                "buy_amount", "fee_token", "fee_amount", "fee_policies",
-            ]
+            columns = self.COLUMNS
 
             batch = []
             batch_size = 500
@@ -376,7 +709,7 @@ class CowIngestor(BaseIngestor):
                     )
 
                 owner_start = time.monotonic()
-                trades, api_failed = self._fetch_trades_for_owner(owner, existing_uids)
+                trades, api_failed = self._fetch_trades_for_owner(owner, existing_keys)
                 obs.cow_owner_duration_seconds.labels(
                     job=obs.get_job_name(),
                     mode=self.mode,
@@ -386,6 +719,11 @@ class CowIngestor(BaseIngestor):
                     consecutive_api_failures += 1
                     failed_owners += 1
                     if consecutive_api_failures >= 10:
+                        # Flush already-fetched trades so they aren't lost on abort
+                        if batch:
+                            self._insert_batch(batch, columns)
+                            total_trades += len(batch)
+                            batch = []
                         logger.error(
                             f"Aborting: API rate-limiting all requests after {consecutive_api_failures} consecutive failures",
                             extra={
@@ -420,23 +758,7 @@ class CowIngestor(BaseIngestor):
                 )
 
                 for trade in trades:
-                    fee_token, fee_amount, fee_policies = self._parse_fees(trade)
-
-                    row = [
-                        trade.get("orderUid", ""),
-                        trade.get("txHash", ""),
-                        trade.get("blockNumber", 0),
-                        trade.get("logIndex", 0),
-                        trade.get("owner", ""),
-                        trade.get("sellToken", ""),
-                        trade.get("buyToken", ""),
-                        trade.get("sellAmount", "0"),
-                        trade.get("buyAmount", "0"),
-                        fee_token,
-                        fee_amount,
-                        fee_policies,
-                    ]
-                    batch.append(row)
+                    batch.append(self._trade_to_row(trade))
 
                 if len(batch) >= batch_size:
                     self._insert_batch(batch, columns)
