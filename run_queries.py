@@ -158,10 +158,12 @@ def create_argparser() -> argparse.ArgumentParser:
                        help="Mixpanel data residency region (default: US)")
 
     # CoW ingestor parameters
-    parser.add_argument("--cow-mode", choices=["daily", "backfill"], default="daily",
-                       help="CoW ingestion mode: daily (recent owners) or backfill (all owners)")
-    parser.add_argument("--cow-lookback-days", type=int, default=2,
-                       help="Number of days to look back for daily mode (default: 2)")
+    parser.add_argument("--cow-mode", choices=["daily", "backfill", "repair"], default="daily",
+                       help="CoW ingestion mode: daily (recent owners), backfill (all owners), "
+                            "or repair (fetch orders whose on-chain fills are missing from the "
+                            "target table, by orderUid; bound the scan with --cow-backfill-from)")
+    parser.add_argument("--cow-lookback-days", type=int, default=7,
+                       help="Number of days to look back for daily mode (default: 7)")
     parser.add_argument("--cow-backfill-from",
                        default=os.getenv("COW_BACKFILL_FROM", ""),
                        help="Start date for backfill mode (YYYY-MM-DD), e.g. 2024-01-01")

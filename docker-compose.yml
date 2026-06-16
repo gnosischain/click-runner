@@ -103,10 +103,13 @@ services:
       CH_VERIFY: "False"
       CH_QUERY_VAR_COW_DATABASE: crawlers_data
       COW_SOURCE_TABLE: dbt.int_execution_cow_trades
+    # 7-day lookback: tolerates multi-day job failures and staleness of the
+    # upstream dbt.int_execution_cow_trades owner source (2 days was too tight
+    # — any upstream delay > lookback silently yields zero owners).
     command: >
       --ingestor=cow
       --cow-mode=daily
-      --cow-lookback-days=2
+      --cow-lookback-days=7
       --create-table-sql=queries/cow/create_table.sql
       --table-name=crawlers_data.cow_api_trade_fees
       --cow-source-table=dbt.int_execution_cow_trades
