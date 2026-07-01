@@ -1,4 +1,4 @@
-INSERT INTO crawlers_data.dune_bridge_flows (
+INSERT INTO playground_max.dune_bridge_flows (
   timestamp, bridge, source_chain, dest_chain, token, amount_token, amount_usd, net_usd
 )
 SELECT
