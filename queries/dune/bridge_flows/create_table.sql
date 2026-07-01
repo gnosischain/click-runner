@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS crawlers_data.dune_bridge_flows (
+CREATE TABLE IF NOT EXISTS playground_max.dune_bridge_flows (
   `timestamp`    DateTime,
   `bridge`       LowCardinality(String),
   `source_chain` LowCardinality(String),
