@@ -2,7 +2,7 @@
 -- counterparty). Classification lives in dbt-cerebro's
 -- int_celo_gpay_activity.sql, mirroring how Gnosis Chain classifies from
 -- raw execution.logs rather than pre-classifying upstream.
-CREATE TABLE IF NOT EXISTS {{CELO_GPAY_DB}}.celo_gpay_transfers
+CREATE TABLE IF NOT EXISTS crawlers_data.celo_gpay_transfers
 (
     `block_date`     Date,
     `block_time`     DateTime,

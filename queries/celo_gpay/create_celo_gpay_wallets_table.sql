@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS {{CELO_GPAY_DB}}.celo_gpay_wallets
+CREATE TABLE IF NOT EXISTS crawlers_data.celo_gpay_wallets
 (
     `safe_address`    String,
     `owner_address`   Nullable(String),

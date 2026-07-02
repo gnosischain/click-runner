@@ -1,1 +1,1 @@
-OPTIMIZE TABLE {{CELO_GPAY_DB}}.celo_gpay_wallets FINAL;
+OPTIMIZE TABLE crawlers_data.celo_gpay_wallets FINAL;

@@ -2,7 +2,7 @@
 --   --queries=queries/celo_gpay/create_celo_gpay_transfers_table.sql,queries/celo_gpay/insert_celo_gpay_transfers_full.sql
 -- Cheap because GP Celo launched 2026-06-23 — "full history" is only ~1 week of data.
 -- Raw rows only — classification happens downstream in dbt (int_celo_gpay_activity.sql).
-INSERT INTO {{CELO_GPAY_DB}}.celo_gpay_transfers
+INSERT INTO crawlers_data.celo_gpay_transfers
     (block_date, block_time, tx_hash, sender, receiver, token_symbol, token_address, amount, amount_usd)
 SELECT
     toDate(parseDateTimeBestEffortOrNull(block_date))  AS block_date,

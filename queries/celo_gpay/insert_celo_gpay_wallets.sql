@@ -5,7 +5,7 @@
 -- than storing '' — an empty string is an ambiguous sentinel (looks like a
 -- real-but-empty address, and would silently collide with other unknown
 -- rows on any join), whereas NULL and [] are unambiguous "no data" markers.
-INSERT INTO {{CELO_GPAY_DB}}.celo_gpay_wallets (safe_address, owner_address, owners, issued_at, first_spend_at, is_activated)
+INSERT INTO crawlers_data.celo_gpay_wallets (safe_address, owner_address, owners, issued_at, first_spend_at, is_activated)
 -- Use the *OrNull parse variants, not if(x = '', NULL, parse(x)): ClickHouse's
 -- if() evaluates both branches columnar-wise before picking per row, so
 -- parseDateTimeBestEffort() still runs (and throws) on the '' rows even

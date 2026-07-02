@@ -4,7 +4,7 @@
 -- (queries/celo_gpay/optimize_celo_gpay_transfers.sql), so duplicates never
 -- surface on same-day reads.
 -- Raw rows only — classification happens downstream in dbt (int_celo_gpay_activity.sql).
-INSERT INTO {{CELO_GPAY_DB}}.celo_gpay_transfers
+INSERT INTO crawlers_data.celo_gpay_transfers
     (block_date, block_time, tx_hash, sender, receiver, token_symbol, token_address, amount, amount_usd)
 SELECT
     toDate(parseDateTimeBestEffortOrNull(block_date))  AS block_date,
