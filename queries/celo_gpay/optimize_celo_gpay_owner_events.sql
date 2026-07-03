@@ -1,1 +1,0 @@
-OPTIMIZE TABLE crawlers_data.celo_gpay_owner_events FINAL;

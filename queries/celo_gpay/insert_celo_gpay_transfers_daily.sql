@@ -1,5 +1,6 @@
--- Daily incremental: 7-day lookback window for resilience against indexing lag
--- or a missed run — overlap with prior runs is safe because the table is
+-- Daily incremental: 3-day lookback window for resilience against indexing lag
+-- or a missed run (tolerates the job not running for up to 2 days straight) —
+-- overlap with prior runs is safe because the table is
 -- ReplacingMergeTree and every run is followed by OPTIMIZE ... FINAL
 -- (queries/celo_gpay/optimize_celo_gpay_transfers.sql), so duplicates never
 -- surface on same-day reads.
