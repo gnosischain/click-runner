@@ -516,6 +516,131 @@ services:
        python run_queries.py --ingestor=csv --create-table-sql=queries/dune/gno_supply/create_table.sql --insert-sql=queries/dune/gno_supply/insert.sql
       "
 
+  # Celo GP (GravityPay on Celo) Ingestion Services — raw rows pulled from Dune
+  # results via ClickHouse url(), same pattern as the dune-* csv ingestors.
+
+  # Transfers — one-time backfill (~1 week of history; GP Celo launched 2026-06-23)
+  celo-gpay-transfers-full-ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: celo-gpay-transfers-full-ingestor
+    volumes:
+      - ./queries:/app/queries
+    environment:
+      CH_HOST: ${CH_DB_HOST}
+      CH_PORT: ${CH_NATIVE_PORT}
+      CH_USER: ${CH_USER}
+      CH_PASSWORD: ${CH_PASSWORD}
+      CH_DB: ${CH_DB}
+      CH_SECURE: ${CH_SECURE}
+      CH_VERIFY: "False"
+      CH_QUERY_VAR_DUNE_API_KEY: ${DUNE_API_KEY}
+      CH_QUERY_VAR_CELO_GPAY_TRANSFERS_QUERY_ID_FULL: ${CELO_GPAY_TRANSFERS_QUERY_ID_FULL}
+    command: >
+      --ingestor=csv
+      --create-table-sql=queries/celo_gpay/create_celo_gpay_transfers_table.sql
+      --insert-sql=queries/celo_gpay/insert_celo_gpay_transfers_full.sql
+      --optimize-sql=queries/celo_gpay/optimize_celo_gpay_transfers.sql
+
+  # Transfers — recurring daily (3-day lookback; OPTIMIZE FINAL collapses dupes)
+  celo-gpay-transfers-daily-ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: celo-gpay-transfers-daily-ingestor
+    volumes:
+      - ./queries:/app/queries
+    environment:
+      CH_HOST: ${CH_DB_HOST}
+      CH_PORT: ${CH_NATIVE_PORT}
+      CH_USER: ${CH_USER}
+      CH_PASSWORD: ${CH_PASSWORD}
+      CH_DB: ${CH_DB}
+      CH_SECURE: ${CH_SECURE}
+      CH_VERIFY: "False"
+      CH_QUERY_VAR_DUNE_API_KEY: ${DUNE_API_KEY}
+      CH_QUERY_VAR_CELO_GPAY_TRANSFERS_QUERY_ID_DAY: ${CELO_GPAY_TRANSFERS_QUERY_ID_DAY}
+    command: >
+      --ingestor=csv
+      --create-table-sql=queries/celo_gpay/create_celo_gpay_transfers_table.sql
+      --insert-sql=queries/celo_gpay/insert_celo_gpay_transfers_daily.sql
+      --optimize-sql=queries/celo_gpay/optimize_celo_gpay_transfers.sql
+
+  # Wallet events — one-time backfill
+  celo-gpay-wallet-events-full-ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: celo-gpay-wallet-events-full-ingestor
+    volumes:
+      - ./queries:/app/queries
+    environment:
+      CH_HOST: ${CH_DB_HOST}
+      CH_PORT: ${CH_NATIVE_PORT}
+      CH_USER: ${CH_USER}
+      CH_PASSWORD: ${CH_PASSWORD}
+      CH_DB: ${CH_DB}
+      CH_SECURE: ${CH_SECURE}
+      CH_VERIFY: "False"
+      CH_QUERY_VAR_DUNE_API_KEY: ${DUNE_API_KEY}
+      CH_QUERY_VAR_CELO_GPAY_WALLET_EVENTS_QUERY_ID_FULL: ${CELO_GPAY_WALLET_EVENTS_QUERY_ID_FULL}
+    command: >
+      --ingestor=csv
+      --create-table-sql=queries/celo_gpay/create_celo_gpay_wallet_events_table.sql
+      --insert-sql=queries/celo_gpay/insert_celo_gpay_wallet_events_full.sql
+      --optimize-sql=queries/celo_gpay/optimize_celo_gpay_wallet_events.sql
+
+  # Wallet events — recurring daily (3-day lookback; OPTIMIZE FINAL collapses dupes)
+  celo-gpay-wallet-events-daily-ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: celo-gpay-wallet-events-daily-ingestor
+    volumes:
+      - ./queries:/app/queries
+    environment:
+      CH_HOST: ${CH_DB_HOST}
+      CH_PORT: ${CH_NATIVE_PORT}
+      CH_USER: ${CH_USER}
+      CH_PASSWORD: ${CH_PASSWORD}
+      CH_DB: ${CH_DB}
+      CH_SECURE: ${CH_SECURE}
+      CH_VERIFY: "False"
+      CH_QUERY_VAR_DUNE_API_KEY: ${DUNE_API_KEY}
+      CH_QUERY_VAR_CELO_GPAY_WALLET_EVENTS_QUERY_ID_DAY: ${CELO_GPAY_WALLET_EVENTS_QUERY_ID_DAY}
+    command: >
+      --ingestor=csv
+      --create-table-sql=queries/celo_gpay/create_celo_gpay_wallet_events_table.sql
+      --insert-sql=queries/celo_gpay/insert_celo_gpay_wallet_events_daily.sql
+      --optimize-sql=queries/celo_gpay/optimize_celo_gpay_wallet_events.sql
+
+  # Combined Celo GP daily ingestor (transfers + wallet events) for a single cron entry
+  celo-gpay-all-daily-ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: celo-gpay-all-daily-ingestor
+    volumes:
+      - ./queries:/app/queries
+    environment:
+      CH_HOST: ${CH_DB_HOST}
+      CH_PORT: ${CH_NATIVE_PORT}
+      CH_USER: ${CH_USER}
+      CH_PASSWORD: ${CH_PASSWORD}
+      CH_DB: ${CH_DB}
+      CH_SECURE: ${CH_SECURE}
+      CH_VERIFY: "False"
+      CH_QUERY_VAR_DUNE_API_KEY: ${DUNE_API_KEY}
+      CH_QUERY_VAR_CELO_GPAY_TRANSFERS_QUERY_ID_DAY: ${CELO_GPAY_TRANSFERS_QUERY_ID_DAY}
+      CH_QUERY_VAR_CELO_GPAY_WALLET_EVENTS_QUERY_ID_DAY: ${CELO_GPAY_WALLET_EVENTS_QUERY_ID_DAY}
+    entrypoint: []
+    command: >
+      /bin/bash -c "
+      python run_queries.py --ingestor=csv --create-table-sql=queries/celo_gpay/create_celo_gpay_transfers_table.sql --insert-sql=queries/celo_gpay/insert_celo_gpay_transfers_daily.sql --optimize-sql=queries/celo_gpay/optimize_celo_gpay_transfers.sql && \
+      python run_queries.py --ingestor=csv --create-table-sql=queries/celo_gpay/create_celo_gpay_wallet_events_table.sql --insert-sql=queries/celo_gpay/insert_celo_gpay_wallet_events_daily.sql --optimize-sql=queries/celo_gpay/optimize_celo_gpay_wallet_events.sql
+      "
+
   # Mixpanel Events Ingestion Services
   mixpanel-events-daily-ingestor:
     build:
@@ -570,6 +695,32 @@ services:
       --mixpanel-from-date=${MIXPANEL_BACKFILL_FROM}
       --mixpanel-to-date=${MIXPANEL_BACKFILL_TO}
       --create-table-sql=queries/mixpanel/create_events_table.sql
+
+  # Mixpanel People/Profile Ingestion Service (Engage API — daily full snapshot)
+  mixpanel-profiles-daily-ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mixpanel-profiles-daily-ingestor
+    volumes:
+      - ./queries:/app/queries
+    environment:
+      CH_HOST: ${CH_DB_HOST}
+      CH_PORT: ${CH_NATIVE_PORT}
+      CH_USER: ${MIXPANEL_CH_USER:-${CH_USER}}
+      CH_PASSWORD: ${MIXPANEL_CH_PASSWORD:-${CH_PASSWORD}}
+      CH_DB: ${MIXPANEL_DATABASE:-mixpanel}
+      CH_SECURE: ${CH_SECURE}
+      CH_VERIFY: "False"
+
+      CH_QUERY_VAR_MIXPANEL_PROJECT_ID: ${MIXPANEL_PROJECT_ID}
+      CH_QUERY_VAR_MIXPANEL_SA_USERNAME: ${MIXPANEL_SA_USERNAME}
+      CH_QUERY_VAR_MIXPANEL_SA_SECRET: ${MIXPANEL_SA_SECRET}
+      CH_QUERY_VAR_MIXPANEL_DATABASE: ${MIXPANEL_DATABASE:-mixpanel}
+      MIXPANEL_REGION: ${MIXPANEL_REGION:-US}
+    command: >
+      --ingestor=mixpanel-profiles
+      --create-table-sql=queries/mixpanel_profiles/create_profiles_table.sql
 
   dune-execute-only-daily-ingestor:
     build:
