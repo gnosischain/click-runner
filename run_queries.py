@@ -14,6 +14,7 @@ from ingestors.csv_ingestor import CSVIngestor
 from ingestors.parquet_ingestor import ParquetIngestor
 from ingestors.gdrive_ingestor import GDriveIngestor
 from ingestors.mixpanel_ingestor import MixpanelIngestor
+from ingestors.mixpanel_profiles_ingestor import MixpanelProfilesIngestor
 from ingestors.cow_ingestor import CowIngestor
 
 logger = logging.getLogger("clickhouse_runner")
@@ -120,7 +121,7 @@ def create_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--verify", default=os.getenv("CH_VERIFY", "True"), help="Verify TLS certificate")
     
     # Ingestor parameters
-    parser.add_argument("--ingestor", choices=["csv", "parquet", "gdrive", "query", "dune-execute-only", "mixpanel", "cow"], default="query",
+    parser.add_argument("--ingestor", choices=["csv", "parquet", "gdrive", "query", "dune-execute-only", "mixpanel", "mixpanel-profiles", "cow"], default="query",
                        help="Type of ingestor to use")
     
     # CSV ingestor parameters
@@ -360,6 +361,48 @@ def run_mixpanel_ingestor(args, client, query_vars):
         return ingestor.ingest(skip_table_creation=args.skip_table_creation)
 
 
+def run_mixpanel_profiles_ingestor(args, client, query_vars):
+    """Run the Mixpanel People/profile (Engage API) snapshot ingestor"""
+    create_table_sql = args.create_table_sql
+
+    if not create_table_sql:
+        ch_queries = os.getenv("CH_QUERIES", "").split(",")
+        if ch_queries[0].strip():
+            create_table_sql = ch_queries[0].strip()
+
+    if not create_table_sql:
+        create_table_sql = "queries/mixpanel_profiles/create_profiles_table.sql"
+
+    project_id = query_vars.get("MIXPANEL_PROJECT_ID", "")
+    sa_username = query_vars.get("MIXPANEL_SA_USERNAME", "")
+    sa_secret = query_vars.get("MIXPANEL_SA_SECRET", "")
+    database = query_vars.get("MIXPANEL_DATABASE", "mixpanel")
+    table_name = args.table_name or os.getenv("CH_TABLE_NAME", f"{database}.mixpanel_raw_profiles")
+
+    if not project_id or not sa_username or not sa_secret:
+        logger.error(
+            "Missing Mixpanel credentials. Required env vars: "
+            "CH_QUERY_VAR_MIXPANEL_PROJECT_ID, CH_QUERY_VAR_MIXPANEL_SA_USERNAME, "
+            "CH_QUERY_VAR_MIXPANEL_SA_SECRET"
+        )
+        return False
+
+    ingestor = MixpanelProfilesIngestor(
+        client=client,
+        variables={**query_vars, "MIXPANEL_DATABASE": database},
+        create_table_sql=create_table_sql,
+        table_name=table_name,
+        project_id=project_id,
+        sa_username=sa_username,
+        sa_secret=sa_secret,
+        region=args.mixpanel_region,
+    )
+
+    obs.update_health(table_name=table_name)
+    with obs.time_operation(obs.get_job_name(), "mixpanel_profiles", "ingest"):
+        return ingestor.ingest(skip_table_creation=args.skip_table_creation)
+
+
 def run_dune_execute_only(args, client, query_vars):
     """Trigger dedicated Dune queries without saving results to ClickHouse."""
     query_ids = parse_csv_list(args.dune_execute_only_query_ids)
@@ -484,6 +527,8 @@ def main():
             success = run_gdrive_ingestor(args, client, query_variables)
         elif args.ingestor == "mixpanel":
             success = run_mixpanel_ingestor(args, client, query_variables)
+        elif args.ingestor == "mixpanel-profiles":
+            success = run_mixpanel_profiles_ingestor(args, client, query_variables)
         elif args.ingestor == "cow":
             success = run_cow_ingestor(args, client, query_variables)
         elif args.ingestor == "dune-execute-only":
