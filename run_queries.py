@@ -452,6 +452,10 @@ def run_cow_ingestor(args, client, query_vars):
         logger.error("CoW ingestor requires --table-name and --cow-source-table")
         return False
 
+    # Optional: authenticated CoW API access (higher rate limit). Absent -> unauthenticated.
+    api_key = query_vars.get("COW_API_KEY") or None
+    logger.info("CoW ingestor: API key %s", "configured" if api_key else "not set (unauthenticated)")
+
     ingestor = CowIngestor(
         client=client,
         variables=query_vars,
@@ -462,6 +466,7 @@ def run_cow_ingestor(args, client, query_vars):
         lookback_days=args.cow_lookback_days,
         backfill_from=args.cow_backfill_from or None,
         max_pages=args.cow_max_pages,
+        api_key=api_key,
     )
 
     obs.update_health(table_name=table_name, source_table=source_table)

@@ -13,7 +13,8 @@ logger = logging.getLogger("clickhouse_runner")
 
 COW_API_BASE = "https://api.cow.fi/xdai/api/v2"
 PAGE_LIMIT = 1000
-RATE_LIMIT_DELAY = 0.6  # ~100 req/min
+RATE_LIMIT_DELAY = 0.6  # ~100 req/min (unauthenticated)
+AUTH_RATE_LIMIT_DELAY = 0.1  # ~10 RPS, safely under the ~30 RPS key allowance
 MAX_RETRIES = 2
 
 # Larger batches => far fewer parts => far less background-merge pressure,
@@ -62,8 +63,15 @@ class CowIngestor(BaseIngestor):
         lookback_days: int = 7,
         backfill_from: Optional[str] = None,
         max_pages: Optional[int] = None,
+        api_key: Optional[str] = None,
     ):
         super().__init__(client, variables)
+        # Optional CoW API key. When set, send it as the X-API-Key header (raises
+        # the rate limit to ~30 RPS) and use a shorter inter-request delay; when
+        # absent, behave exactly as the unauthenticated path did.
+        self.api_key = api_key
+        self.headers = {"X-API-Key": api_key} if api_key else {}
+        self.rate_limit_delay = AUTH_RATE_LIMIT_DELAY if api_key else RATE_LIMIT_DELAY
         self.create_table_sql = create_table_sql
         self.table_name = table_name
         self.source_table = source_table
@@ -158,7 +166,7 @@ class CowIngestor(BaseIngestor):
         for attempt in range(MAX_RETRIES + 1):
             try:
                 with obs.time_operation(obs.get_job_name(), "cow", "api_get"):
-                    resp = requests.get(url, timeout=30)
+                    resp = requests.get(url, headers=self.headers, timeout=30)
                 result = "success" if resp.status_code < 400 else "failure"
                 obs.cow_api_requests_total.labels(
                     job=obs.get_job_name(),
@@ -318,7 +326,7 @@ class CowIngestor(BaseIngestor):
 
             offset += PAGE_LIMIT
             page += 1
-            time.sleep(RATE_LIMIT_DELAY)
+            time.sleep(self.rate_limit_delay)
 
         if page >= self.max_pages:
             logger.warning(
@@ -519,7 +527,7 @@ class CowIngestor(BaseIngestor):
                 total_trades += min(batch_size, len(batch))
                 batch = batch[batch_size:]
 
-            time.sleep(RATE_LIMIT_DELAY)
+            time.sleep(self.rate_limit_delay)
 
         if batch:
             self._insert_batch(batch, self.COLUMNS)
@@ -652,7 +660,7 @@ class CowIngestor(BaseIngestor):
                     total_trades += len(batch)
                     batch = []
 
-                time.sleep(RATE_LIMIT_DELAY)
+                time.sleep(self.rate_limit_delay)
 
             # Insert remaining
             if batch:

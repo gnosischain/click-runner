@@ -76,6 +76,7 @@ services:
       CH_SECURE: ${CH_SECURE}
       CH_VERIFY: "False"
       CH_QUERY_VAR_COW_DATABASE: crawlers_data
+      CH_QUERY_VAR_COW_API_KEY: ${COW_API_KEY}
       COW_SOURCE_TABLE: dbt.int_execution_cow_trades
     command: >
       --ingestor=cow
@@ -102,6 +103,7 @@ services:
       CH_SECURE: ${CH_SECURE}
       CH_VERIFY: "False"
       CH_QUERY_VAR_COW_DATABASE: crawlers_data
+      CH_QUERY_VAR_COW_API_KEY: ${COW_API_KEY}
       COW_SOURCE_TABLE: dbt.int_execution_cow_trades
     # 7-day lookback: tolerates multi-day job failures and staleness of the
     # upstream dbt.int_execution_cow_trades owner source (2 days was too tight
