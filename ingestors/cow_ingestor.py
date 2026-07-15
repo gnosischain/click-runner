@@ -249,8 +249,8 @@ class CowIngestor(BaseIngestor):
     def _trade_key(trade: dict) -> Tuple[str, str, int]:
         """Per-fill identity of a trade: (order_uid, tx_hash, log_index)."""
         return (
-            trade.get("orderUid", "").lower(),
-            trade.get("txHash", "").lower(),
+            (trade.get("orderUid") or "").lower(),
+            (trade.get("txHash") or "").lower(),
             int(trade.get("logIndex") or 0),
         )
 
@@ -349,15 +349,15 @@ class CowIngestor(BaseIngestor):
         """Map an API trade response entry to a ClickHouse row (see COLUMNS)."""
         fee_token, fee_amount, fee_policies = self._parse_fees(trade)
         return [
-            trade.get("orderUid", ""),
-            trade.get("txHash", ""),
-            trade.get("blockNumber", 0),
-            trade.get("logIndex", 0),
-            trade.get("owner", ""),
-            trade.get("sellToken", ""),
-            trade.get("buyToken", ""),
-            trade.get("sellAmount", "0"),
-            trade.get("buyAmount", "0"),
+            (trade.get("orderUid") or ""),
+            (trade.get("txHash") or ""),
+            (trade.get("blockNumber") or 0),
+            (trade.get("logIndex") or 0),
+            (trade.get("owner") or ""),
+            (trade.get("sellToken") or ""),
+            (trade.get("buyToken") or ""),
+            (trade.get("sellAmount") or "0"),
+            (trade.get("buyAmount") or "0"),
             fee_token,
             fee_amount,
             fee_policies,
@@ -374,15 +374,15 @@ class CowIngestor(BaseIngestor):
 
         token_sums: Dict[str, int] = {}
         for fee in fees:
-            token = fee.get("token", "")
-            amount = int(fee.get("amount", "0"))
+            token = fee.get("token") or ""
+            amount = int(fee.get("amount") or "0")
             token_sums[token] = token_sums.get(token, 0) + amount
 
         fee_token = max(token_sums, key=token_sums.get)
         fee_total = str(token_sums[fee_token])
 
         policies = json.dumps(
-            [{"policy": f.get("policy", {}), "amount": f.get("amount", "0"), "token": f.get("token", "")} for f in fees]
+            [{"policy": f.get("policy") or {}, "amount": f.get("amount") or "0", "token": f.get("token") or ""} for f in fees]
         )
 
         return (fee_token, fee_total, policies)
