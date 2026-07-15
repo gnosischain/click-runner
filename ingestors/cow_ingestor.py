@@ -70,7 +70,12 @@ class CowIngestor(BaseIngestor):
         # the rate limit to ~30 RPS) and use a shorter inter-request delay; when
         # absent, behave exactly as the unauthenticated path did.
         self.api_key = api_key
-        self.headers = {"X-API-Key": api_key} if api_key else {}
+        # CoW's edge (CloudFront/WAF) rate-limits the default python-requests
+        # User-Agent even when a valid X-API-Key is present, so set a descriptive
+        # UA (curl and browser-like UAs are served the full ~30 RPS allowance).
+        self.headers = {"User-Agent": "gnosis-analytics-cow-ingestor/1.0"}
+        if api_key:
+            self.headers["X-API-Key"] = api_key
         self.rate_limit_delay = AUTH_RATE_LIMIT_DELAY if api_key else RATE_LIMIT_DELAY
         self.create_table_sql = create_table_sql
         self.table_name = table_name
