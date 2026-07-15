@@ -9,4 +9,5 @@ google-auth
 google-auth-oauthlib
 google-auth-httplib2
 requests
+curl_cffi==0.15.0
 prometheus_client==0.21.0

@@ -3,7 +3,7 @@ import logging
 import time
 from typing import Dict, List, Optional, Set, Tuple
 
-import requests
+from curl_cffi import requests as curl_requests
 from clickhouse_connect.driver.client import Client
 
 import observability as obs
@@ -16,6 +16,11 @@ PAGE_LIMIT = 1000
 RATE_LIMIT_DELAY = 0.6  # ~100 req/min (unauthenticated)
 AUTH_RATE_LIMIT_DELAY = 0.1  # ~10 RPS, safely under the ~30 RPS key allowance
 MAX_RETRIES = 2
+# CoW's CloudFront edge rate-limits by TLS fingerprint (JA3): the python/urllib3
+# handshake is flagged as a bot and 429'd even with a valid X-API-Key. Issuing
+# requests via curl_cffi impersonating a browser handshake is what gets served
+# the authenticated allowance. "chrome" tracks a recent Chrome build.
+IMPERSONATE_BROWSER = "chrome"
 
 # Larger batches => far fewer parts => far less background-merge pressure,
 # which is what saturates memory on small ClickHouse nodes. 5k rows is a
@@ -70,12 +75,10 @@ class CowIngestor(BaseIngestor):
         # the rate limit to ~30 RPS) and use a shorter inter-request delay; when
         # absent, behave exactly as the unauthenticated path did.
         self.api_key = api_key
-        # CoW's edge (CloudFront/WAF) rate-limits the default python-requests
-        # User-Agent even when a valid X-API-Key is present, so set a descriptive
-        # UA (curl and browser-like UAs are served the full ~30 RPS allowance).
-        self.headers = {"User-Agent": "gnosis-analytics-cow-ingestor/1.0"}
-        if api_key:
-            self.headers["X-API-Key"] = api_key
+        # Only the API key header is set here; the browser User-Agent and the
+        # TLS fingerprint that actually get us past CoW's edge come from
+        # curl_cffi's impersonation in _api_get (see IMPERSONATE_BROWSER).
+        self.headers = {"X-API-Key": api_key} if api_key else {}
         self.rate_limit_delay = AUTH_RATE_LIMIT_DELAY if api_key else RATE_LIMIT_DELAY
         self.create_table_sql = create_table_sql
         self.table_name = table_name
@@ -166,12 +169,17 @@ class CowIngestor(BaseIngestor):
         except Exception:
             return set()
 
-    def _api_get(self, url: str) -> Optional[requests.Response]:
+    def _api_get(self, url: str) -> Optional[curl_requests.Response]:
         """GET with retry (up to MAX_RETRIES) and rate limit handling."""
         for attempt in range(MAX_RETRIES + 1):
             try:
                 with obs.time_operation(obs.get_job_name(), "cow", "api_get"):
-                    resp = requests.get(url, headers=self.headers, timeout=30)
+                    resp = curl_requests.get(
+                        url,
+                        headers=self.headers,
+                        impersonate=IMPERSONATE_BROWSER,
+                        timeout=30,
+                    )
                 result = "success" if resp.status_code < 400 else "failure"
                 obs.cow_api_requests_total.labels(
                     job=obs.get_job_name(),
@@ -192,7 +200,7 @@ class CowIngestor(BaseIngestor):
                     time.sleep(10)
                     continue
                 return resp
-            except requests.RequestException as e:
+            except curl_requests.RequestsError as e:
                 obs.cow_api_requests_total.labels(
                     job=obs.get_job_name(),
                     status_code="exception",
@@ -298,7 +306,7 @@ class CowIngestor(BaseIngestor):
             try:
                 resp.raise_for_status()
                 trades = resp.json()
-            except (requests.RequestException, ValueError) as e:
+            except (curl_requests.RequestsError, ValueError) as e:
                 logger.error(
                     f"API error for owner {owner}: {e}",
                     extra={
