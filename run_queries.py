@@ -16,6 +16,8 @@ from ingestors.gdrive_ingestor import GDriveIngestor
 from ingestors.mixpanel_ingestor import MixpanelIngestor
 from ingestors.mixpanel_profiles_ingestor import MixpanelProfilesIngestor
 from ingestors.cow_ingestor import CowIngestor
+from ingestors.snapshot_ingestor import SnapshotIngestor
+from ingestors.forum_ingestor import ForumIngestor
 
 logger = logging.getLogger("clickhouse_runner")
 
@@ -121,7 +123,7 @@ def create_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--verify", default=os.getenv("CH_VERIFY", "True"), help="Verify TLS certificate")
     
     # Ingestor parameters
-    parser.add_argument("--ingestor", choices=["csv", "parquet", "gdrive", "query", "dune-execute-only", "mixpanel", "mixpanel-profiles", "cow"], default="query",
+    parser.add_argument("--ingestor", choices=["csv", "parquet", "gdrive", "query", "dune-execute-only", "mixpanel", "mixpanel-profiles", "cow", "snapshot", "forum"], default="query",
                        help="Type of ingestor to use")
     
     # CSV ingestor parameters
@@ -173,6 +175,21 @@ def create_argparser() -> argparse.ArgumentParser:
                        help="Fully qualified table to read owner addresses from (e.g. dbt.int_execution_cow_trades)")
     parser.add_argument("--cow-max-pages", type=int, default=500,
                        help="Max API pages per owner (each page = 1000 trades, default: 500 = 500k trades)")
+
+    # Snapshot (governance) ingestor parameters
+    parser.add_argument("--snapshot-mode", choices=["daily", "backfill"], default="daily",
+                       help="Snapshot ingestion mode: backfill (all proposals+votes) or "
+                            "daily (refresh open + recently-closed proposals)")
+    parser.add_argument("--snapshot-vote-refresh-days", type=int, default=5,
+                       help="Daily mode: also refetch votes for proposals closed within N days "
+                            "(default: 5)")
+
+    # Forum (Discourse) ingestor parameters
+    parser.add_argument("--forum-mode", choices=["daily", "backfill"], default="daily",
+                       help="Forum ingestion mode: backfill (all topics) or daily "
+                            "(topics bumped since the stored watermark)")
+    parser.add_argument("--forum-max-pages", type=int, default=400,
+                       help="Max /latest.json pages to crawl (30 topics/page, default: 400)")
 
     return parser
 
@@ -474,6 +491,56 @@ def run_cow_ingestor(args, client, query_vars):
         return ingestor.ingest(skip_table_creation=args.skip_table_creation)
 
 
+def run_snapshot_ingestor(args, client, query_vars):
+    """Run the Snapshot (off-chain governance) ingestor"""
+    database = query_vars.get("GOVERNANCE_DATABASE", "crawlers_data")
+    space = query_vars.get("SNAPSHOT_SPACE", "gnosis.eth")
+    api_key = query_vars.get("SNAPSHOT_API_KEY") or None
+    graphql_url = query_vars.get("SNAPSHOT_GRAPHQL_URL") or None
+
+    ingestor = SnapshotIngestor(
+        client=client,
+        variables={**query_vars, "GOVERNANCE_DATABASE": database},
+        database=database,
+        space=space,
+        create_space_sql="queries/governance/create_snapshot_space_table.sql",
+        create_proposals_sql="queries/governance/create_snapshot_proposals_table.sql",
+        create_votes_sql="queries/governance/create_snapshot_votes_table.sql",
+        create_follows_sql="queries/governance/create_snapshot_follows_table.sql",
+        api_key=api_key,
+        graphql_url=graphql_url,
+        mode=args.snapshot_mode,
+        vote_refresh_days=args.snapshot_vote_refresh_days,
+    )
+
+    obs.update_health(table_name=f"{database}.snapshot_proposals")
+    with obs.time_operation(obs.get_job_name(), "snapshot", "ingest"):
+        return ingestor.ingest(skip_table_creation=args.skip_table_creation)
+
+
+def run_forum_ingestor(args, client, query_vars):
+    """Run the Gnosis Forum (Discourse) ingestor"""
+    database = query_vars.get("GOVERNANCE_DATABASE", "crawlers_data")
+    base_url = query_vars.get("DISCOURSE_BASE_URL", "https://forum.gnosis.io")
+
+    ingestor = ForumIngestor(
+        client=client,
+        variables={**query_vars, "GOVERNANCE_DATABASE": database},
+        database=database,
+        base_url=base_url,
+        create_categories_sql="queries/governance/create_forum_categories_table.sql",
+        create_topics_sql="queries/governance/create_forum_topics_table.sql",
+        create_posts_sql="queries/governance/create_forum_posts_table.sql",
+        create_users_sql="queries/governance/create_forum_users_table.sql",
+        mode=args.forum_mode,
+        max_pages=args.forum_max_pages,
+    )
+
+    obs.update_health(table_name=f"{database}.forum_topics")
+    with obs.time_operation(obs.get_job_name(), "forum", "ingest"):
+        return ingestor.ingest(skip_table_creation=args.skip_table_creation)
+
+
 def main():
     """Main entry point"""
     obs.setup_logging()
@@ -536,6 +603,10 @@ def main():
             success = run_mixpanel_profiles_ingestor(args, client, query_variables)
         elif args.ingestor == "cow":
             success = run_cow_ingestor(args, client, query_variables)
+        elif args.ingestor == "snapshot":
+            success = run_snapshot_ingestor(args, client, query_variables)
+        elif args.ingestor == "forum":
+            success = run_forum_ingestor(args, client, query_variables)
         elif args.ingestor == "dune-execute-only":
             success = run_dune_execute_only(args, client, query_variables)
         else:  # "query"
