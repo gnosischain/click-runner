@@ -82,6 +82,7 @@ query Proposals($space: String!, $first: Int!, $created_gte: Int!) {
     id
     title
     body
+    discussion
     choices
     type
     state
@@ -434,7 +435,7 @@ class SnapshotIngestor(BaseIngestor):
 
     def _insert_proposals(self, proposals: List[Dict]) -> None:
         columns = [
-            "id", "space_id", "title", "state", "type", "author",
+            "id", "space_id", "title", "state", "type", "author", "discussion",
             "created_at", "start_at", "end_at", "snapshot_block",
             "scores_total", "quorum", "votes_count", "scores_state", "raw_json",
         ]
@@ -447,6 +448,7 @@ class SnapshotIngestor(BaseIngestor):
                 p.get("state") or "",
                 p.get("type") or "",
                 p.get("author") or "",
+                p.get("discussion") or "",
                 _ts(p.get("created")),
                 _ts(p.get("start")),
                 _ts(p.get("end")),

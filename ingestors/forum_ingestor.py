@@ -6,7 +6,9 @@ no auth required, so we never scrape HTML. Four tables:
 
     <db>.forum_categories  category tree
     <db>.forum_topics      one row per topic (discussion thread)
-    <db>.forum_posts       one row per post — i.e. every comment/reply
+    <db>.forum_posts       one row per post — i.e. every comment/reply; carries
+                           both the raw markdown (via include_raw=1) and the
+                           cooked HTML rendering
     <db>.forum_users       public user directory (activity + like counts)
 
 Each row keeps the full API object in `raw_json` plus typed key columns, exactly
@@ -359,7 +361,9 @@ class ForumIngestor(BaseIngestor):
         tid = topic_stub.get("id")
         if tid is None:
             return 0
-        data = self._get(f"/t/{tid}.json")
+        # include_raw=1 adds each post's raw markdown alongside the cooked HTML
+        # (verified supported on both /t/{id}.json and /t/{id}/posts.json).
+        data = self._get(f"/t/{tid}.json", {"include_raw": 1})
         if data is None:
             return 0
 
@@ -378,7 +382,9 @@ class ForumIngestor(BaseIngestor):
         remaining = [pid for pid in stream_ids if pid not in loaded_ids]
 
         for chunk in _chunks(remaining, POST_IDS_CHUNK):
-            more = self._get(f"/t/{tid}/posts.json", {"post_ids[]": chunk})
+            more = self._get(
+                f"/t/{tid}/posts.json", {"post_ids[]": chunk, "include_raw": 1}
+            )
             if more is None:
                 continue
             posts.extend((more.get("post_stream") or {}).get("posts") or [])
@@ -390,7 +396,7 @@ class ForumIngestor(BaseIngestor):
                 rows,
                 ["id", "topic_id", "post_number", "user_id", "username",
                  "created_at", "updated_at", "reply_to_post_number", "reply_count",
-                 "reads", "like_count", "cooked", "raw_json"],
+                 "reads", "like_count", "raw", "cooked", "raw_json"],
             )
         return len(posts)
 
@@ -442,6 +448,7 @@ class ForumIngestor(BaseIngestor):
             _int(post.get("reply_count")),
             _int(post.get("reads")),
             like_count,
+            post.get("raw") or "",
             post.get("cooked") or "",
             json.dumps(post),
         ]

@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS {{GOVERNANCE_DATABASE}}.snapshot_proposals (
     state          LowCardinality(String),
     type           LowCardinality(String),
     author         String,
+    discussion     String,
     created_at     DateTime,
     start_at       DateTime,
     end_at         DateTime,

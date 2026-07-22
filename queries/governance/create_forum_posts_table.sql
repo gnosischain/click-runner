@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS {{GOVERNANCE_DATABASE}}.forum_posts (
     reply_count          UInt32,
     reads                UInt32,
     like_count           UInt32,
+    raw                  String,
     cooked               String,
     raw_json             String,
     ingested_at          DateTime DEFAULT now()
