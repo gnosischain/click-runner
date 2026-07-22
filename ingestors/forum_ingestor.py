@@ -315,7 +315,13 @@ class ForumIngestor(BaseIngestor):
 
     def _enumerate_topics(self, watermark: Optional[datetime]) -> Optional[List[Dict]]:
         """Page /latest.json and collect topic stubs to (re)fetch. Returns None
-        only if the very first page fails (hard error)."""
+        only if the very first page fails (hard error).
+
+        Daily mode stops only when every topic on a page is at/under the
+        watermark. /latest.json is not strictly bumped_at-desc — globally
+        pinned threads sit at the top with stale bumped_at — so stopping on
+        the first stale topic would skip fresher threads on later pages.
+        """
         selected: Dict[int, Dict] = {}
         page = 0
         while page <= self.max_pages:
@@ -329,18 +335,19 @@ class ForumIngestor(BaseIngestor):
             if not topics:
                 break
 
-            stop = False
+            page_has_fresh = False
             for topic in topics:
                 bumped = _dt(topic.get("bumped_at") or topic.get("created_at"))
                 if watermark and bumped <= watermark:
-                    stop = True
                     continue
+                page_has_fresh = True
                 tid = topic.get("id")
                 if tid is not None:
                     selected[tid] = topic
 
-            # Daily mode: once a page is fully at/under the watermark, stop.
-            if watermark and stop:
+            # Daily mode: entire page is at/under the watermark — nothing
+            # newer remains further down the list.
+            if watermark and not page_has_fresh:
                 break
             if not topic_list.get("more_topics_url"):
                 break
