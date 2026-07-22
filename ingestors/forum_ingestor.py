@@ -358,7 +358,7 @@ class ForumIngestor(BaseIngestor):
 
         self._batch_insert(
             self.topics_table,
-            [self._topic_row(data)],
+            [self._topic_row(data, topic_stub)],
             ["id", "title", "slug", "category_id", "posts_count", "reply_count",
              "views", "like_count", "participant_count", "tags", "created_at",
              "last_posted_at", "bumped_at", "closed", "archived", "pinned", "raw_json"],
@@ -387,8 +387,11 @@ class ForumIngestor(BaseIngestor):
             )
         return len(posts)
 
-    def _topic_row(self, data: Dict) -> List:
+    def _topic_row(self, data: Dict, topic_stub: Optional[Dict] = None) -> List:
         # Store topic metadata without the (large) embedded post_stream.
+        # bumped_at is present on /latest.json list stubs but omitted from
+        # /t/{id}.json detail — fall back to the stub, then last_posted_at.
+        stub = topic_stub or {}
         meta = {k: v for k, v in data.items() if k != "post_stream"}
         return [
             _int(data.get("id")),
@@ -403,7 +406,11 @@ class ForumIngestor(BaseIngestor):
             ",".join(data.get("tags") or []),
             _dt(data.get("created_at")),
             _dt(data.get("last_posted_at")),
-            _dt(data.get("bumped_at")),
+            _dt(
+                data.get("bumped_at")
+                or stub.get("bumped_at")
+                or data.get("last_posted_at")
+            ),
             1 if data.get("closed") else 0,
             1 if data.get("archived") else 0,
             1 if data.get("pinned") else 0,
