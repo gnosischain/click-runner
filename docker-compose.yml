@@ -839,18 +839,13 @@ services:
       --ingestor=forum
       --forum-mode=daily
 
-  # Snapshot delegate registry (Ethereum mainnet) — who currently delegates
-  # governance voting power to whom for gnosis.eth. This platform has no
-  # Ethereum mainnet RPC indexing (cryo-indexer/rpc-caller are Gnosis-Chain-
-  # only), so this reuses the dune csv/url() pattern (see dune-bridge-flows)
-  # rather than adding new RPC infrastructure for ~126 lifetime events.
-  # One source query only (small enough to always refetch in full; no
-  # separate day/full split needed). Saved query: https://dune.com/queries/8075078
-  governance-snapshot-delegations-ingestor:
+  # Snapshot DelegateRegistry (Ethereum mainnet) — one-time / repair full history.
+  # Requires MAINNET_RPC_URL with historical eth_getLogs to block 11225329.
+  governance-snapshot-delegations-backfill-ingestor:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: governance-snapshot-delegations-ingestor
+    container_name: governance-snapshot-delegations-backfill-ingestor
     volumes:
       - ./queries:/app/queries
     environment:
@@ -861,12 +856,37 @@ services:
       CH_DB: ${CH_DB}
       CH_SECURE: ${CH_SECURE}
       CH_VERIFY: "False"
+      MAINNET_RPC_URL: ${MAINNET_RPC_URL}
       CH_QUERY_VAR_GOVERNANCE_DATABASE: ${GOVERNANCE_DATABASE:-crawlers_data}
-      CH_QUERY_VAR_DUNE_API_KEY: ${DUNE_API_KEY}
-      CH_QUERY_VAR_DUNE_DELEGATIONS_QUERY_ID: ${DUNE_DELEGATIONS_QUERY_ID}
+      CH_QUERY_VAR_SNAPSHOT_SPACE: ${SNAPSHOT_SPACE:-gnosis.eth}
     command: >
-      --ingestor=csv
+      --ingestor=snapshot-delegations
+      --delegations-mode=backfill
       --create-table-sql=queries/governance/create_snapshot_delegations_table.sql
-      --insert-sql=queries/governance/insert_snapshot_delegations.sql
 
-  
+  # Snapshot DelegateRegistry — recurring daily (from CH watermark - 128 blocks).
+  # Empty table falls back to a full backfill automatically.
+  governance-snapshot-delegations-daily-ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: governance-snapshot-delegations-daily-ingestor
+    volumes:
+      - ./queries:/app/queries
+    environment:
+      CH_HOST: ${CH_DB_HOST}
+      CH_PORT: ${CH_NATIVE_PORT}
+      CH_USER: ${CH_USER}
+      CH_PASSWORD: ${CH_PASSWORD}
+      CH_DB: ${CH_DB}
+      CH_SECURE: ${CH_SECURE}
+      CH_VERIFY: "False"
+      MAINNET_RPC_URL: ${MAINNET_RPC_URL}
+      CH_QUERY_VAR_GOVERNANCE_DATABASE: ${GOVERNANCE_DATABASE:-crawlers_data}
+      CH_QUERY_VAR_SNAPSHOT_SPACE: ${SNAPSHOT_SPACE:-gnosis.eth}
+    command: >
+      --ingestor=snapshot-delegations
+      --delegations-mode=daily
+      --create-table-sql=queries/governance/create_snapshot_delegations_table.sql
+
+ 

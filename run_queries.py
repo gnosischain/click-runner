@@ -17,6 +17,7 @@ from ingestors.mixpanel_ingestor import MixpanelIngestor
 from ingestors.mixpanel_profiles_ingestor import MixpanelProfilesIngestor
 from ingestors.cow_ingestor import CowIngestor
 from ingestors.snapshot_ingestor import SnapshotIngestor
+from ingestors.snapshot_delegations_ingestor import SnapshotDelegationsIngestor
 from ingestors.forum_ingestor import ForumIngestor
 
 logger = logging.getLogger("clickhouse_runner")
@@ -123,7 +124,7 @@ def create_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--verify", default=os.getenv("CH_VERIFY", "True"), help="Verify TLS certificate")
     
     # Ingestor parameters
-    parser.add_argument("--ingestor", choices=["csv", "parquet", "gdrive", "query", "dune-execute-only", "mixpanel", "mixpanel-profiles", "cow", "snapshot", "forum"], default="query",
+    parser.add_argument("--ingestor", choices=["csv", "parquet", "gdrive", "query", "dune-execute-only", "mixpanel", "mixpanel-profiles", "cow", "snapshot", "snapshot-delegations", "forum"], default="query",
                        help="Type of ingestor to use")
     
     # CSV ingestor parameters
@@ -190,6 +191,23 @@ def create_argparser() -> argparse.ArgumentParser:
                             "(topics bumped since the stored watermark)")
     parser.add_argument("--forum-max-pages", type=int, default=400,
                        help="Max /latest.json pages to crawl (30 topics/page, default: 400)")
+
+    # Snapshot DelegateRegistry (Ethereum mainnet) — replaces Dune query 8075078
+    parser.add_argument("--delegations-mode", choices=["daily", "backfill"], default="daily",
+                       help="Delegations mode: backfill (deploy→tip) or daily "
+                            "(from CH watermark minus reorg overlap→tip; empty table "
+                            "falls back to full backfill)")
+    parser.add_argument("--delegations-dry-run", action="store_true",
+                       help="Fetch DelegateRegistry logs and print/CSV only; skip ClickHouse")
+    parser.add_argument("--delegations-csv", default="",
+                       help="Optional path to write delegation events as CSV (dry-run or ingest)")
+    parser.add_argument("--delegations-from-block", type=int, default=None,
+                       help="Override scan start block (skips mode watermark logic)")
+    parser.add_argument("--delegations-to-block", type=int, default=None,
+                       help="Override scan end block (default: latest)")
+    parser.add_argument("--delegations-reorg-overlap", type=int, default=128,
+                       help="Daily mode: re-scan this many blocks before the CH watermark "
+                            "(default: 128)")
 
     return parser
 
@@ -541,6 +559,58 @@ def run_forum_ingestor(args, client, query_vars):
         return ingestor.ingest(skip_table_creation=args.skip_table_creation)
 
 
+def run_snapshot_delegations_ingestor(args, client, query_vars):
+    """Run the Snapshot DelegateRegistry (Ethereum mainnet) ingestor."""
+    rpc_url = (
+        os.getenv("MAINNET_RPC_URL")
+        or os.getenv("ETH_RPC_URL")
+        or query_vars.get("MAINNET_RPC_URL")
+        or ""
+    ).strip()
+    if not rpc_url:
+        logger.error(
+            "Missing MAINNET_RPC_URL (or ETH_RPC_URL). "
+            "Set it in the environment / .env before running snapshot-delegations."
+        )
+        return False
+
+    database = (
+        query_vars.get("GOVERNANCE_DATABASE")
+        or os.getenv("GOVERNANCE_DATABASE")
+        or "crawlers_data"
+    )
+    space = (
+        query_vars.get("SNAPSHOT_SPACE")
+        or os.getenv("SNAPSHOT_SPACE")
+        or "gnosis.eth"
+    )
+    from_block = args.delegations_from_block
+    if from_block is None:
+        env_from = os.getenv("DELEGATIONS_FROM_BLOCK", "").strip()
+        from_block = int(env_from) if env_from else None
+
+    kwargs = {
+        "client": client,
+        "variables": {**query_vars, "GOVERNANCE_DATABASE": database},
+        "rpc_url": rpc_url,
+        "database": database,
+        "space": space,
+        "create_table_sql": args.create_table_sql
+        or "queries/governance/create_snapshot_delegations_table.sql",
+        "mode": args.delegations_mode,
+        "from_block": from_block,
+        "to_block": args.delegations_to_block,
+        "reorg_overlap_blocks": args.delegations_reorg_overlap,
+        "dry_run": bool(args.delegations_dry_run),
+        "csv_path": args.delegations_csv or None,
+    }
+
+    ingestor = SnapshotDelegationsIngestor(**kwargs)
+    obs.update_health(table_name=f"{database}.snapshot_delegations")
+    with obs.time_operation(obs.get_job_name(), "snapshot_delegations", "ingest"):
+        return ingestor.ingest(skip_table_creation=args.skip_table_creation)
+
+
 def main():
     """Main entry point"""
     obs.setup_logging()
@@ -578,18 +648,20 @@ def main():
         
         # Get variables for SQL queries from environment
         query_variables = get_query_variables()
-        
-        # Connect to ClickHouse
-        client = connect_clickhouse(
-            host=args.host,
-            port=args.port,
-            user=args.user,
-            password=args.password,
-            database=args.db,
-            secure=secure,
-            verify=verify
-        )
-        
+
+        # Dry-run for snapshot-delegations needs only the mainnet RPC — skip CH.
+        client = None
+        if not (args.ingestor == "snapshot-delegations" and args.delegations_dry_run):
+            client = connect_clickhouse(
+                host=args.host,
+                port=args.port,
+                user=args.user,
+                password=args.password,
+                database=args.db,
+                secure=secure,
+                verify=verify,
+            )
+
         # Run the appropriate ingestor
         if args.ingestor == "csv":
             success = run_csv_ingestor(args, client, query_variables)
@@ -605,6 +677,8 @@ def main():
             success = run_cow_ingestor(args, client, query_variables)
         elif args.ingestor == "snapshot":
             success = run_snapshot_ingestor(args, client, query_variables)
+        elif args.ingestor == "snapshot-delegations":
+            success = run_snapshot_delegations_ingestor(args, client, query_variables)
         elif args.ingestor == "forum":
             success = run_forum_ingestor(args, client, query_variables)
         elif args.ingestor == "dune-execute-only":
