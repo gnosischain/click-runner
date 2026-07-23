@@ -838,5 +838,35 @@ services:
     command: >
       --ingestor=forum
       --forum-mode=daily
-      
+
+  # Snapshot delegate registry (Ethereum mainnet) — who currently delegates
+  # governance voting power to whom for gnosis.eth. This platform has no
+  # Ethereum mainnet RPC indexing (cryo-indexer/rpc-caller are Gnosis-Chain-
+  # only), so this reuses the dune csv/url() pattern (see dune-bridge-flows)
+  # rather than adding new RPC infrastructure for ~126 lifetime events.
+  # One source query only (small enough to always refetch in full; no
+  # separate day/full split needed). Saved query: https://dune.com/queries/8075078
+  governance-snapshot-delegations-ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: governance-snapshot-delegations-ingestor
+    volumes:
+      - ./queries:/app/queries
+    environment:
+      CH_HOST: ${CH_DB_HOST}
+      CH_PORT: ${CH_NATIVE_PORT}
+      CH_USER: ${CH_USER}
+      CH_PASSWORD: ${CH_PASSWORD}
+      CH_DB: ${CH_DB}
+      CH_SECURE: ${CH_SECURE}
+      CH_VERIFY: "False"
+      CH_QUERY_VAR_GOVERNANCE_DATABASE: ${GOVERNANCE_DATABASE:-crawlers_data}
+      CH_QUERY_VAR_DUNE_API_KEY: ${DUNE_API_KEY}
+      CH_QUERY_VAR_DUNE_DELEGATIONS_QUERY_ID: ${DUNE_DELEGATIONS_QUERY_ID}
+    command: >
+      --ingestor=csv
+      --create-table-sql=queries/governance/create_snapshot_delegations_table.sql
+      --insert-sql=queries/governance/insert_snapshot_delegations.sql
+
   
