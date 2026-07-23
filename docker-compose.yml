@@ -747,7 +747,7 @@ services:
 
   # Governance / Community ingestion (Snapshot + Gnosis Forum)
   # Dev: set GOVERNANCE_DATABASE=playground_max (and CH_DB=playground_max) in .env.
-  # Prod: GOVERNANCE_DATABASE=crawlers_data.
+  # Prod: GOVERNANCE_DATABASE=governance_db (default).
 
   # Snapshot governance — one-time backfill (all proposals + votes + follows)
   governance-snapshot-backfill-ingestor:
@@ -765,7 +765,7 @@ services:
       CH_DB: ${CH_DB}
       CH_SECURE: ${CH_SECURE}
       CH_VERIFY: "False"
-      CH_QUERY_VAR_GOVERNANCE_DATABASE: ${GOVERNANCE_DATABASE:-crawlers_data}
+      CH_QUERY_VAR_GOVERNANCE_DATABASE: ${GOVERNANCE_DATABASE:-governance_db}
       CH_QUERY_VAR_SNAPSHOT_SPACE: ${SNAPSHOT_SPACE:-gnosis.eth}
       CH_QUERY_VAR_SNAPSHOT_API_KEY: ${SNAPSHOT_API_KEY:-}
     command: >
@@ -788,7 +788,7 @@ services:
       CH_DB: ${CH_DB}
       CH_SECURE: ${CH_SECURE}
       CH_VERIFY: "False"
-      CH_QUERY_VAR_GOVERNANCE_DATABASE: ${GOVERNANCE_DATABASE:-crawlers_data}
+      CH_QUERY_VAR_GOVERNANCE_DATABASE: ${GOVERNANCE_DATABASE:-governance_db}
       CH_QUERY_VAR_SNAPSHOT_SPACE: ${SNAPSHOT_SPACE:-gnosis.eth}
       CH_QUERY_VAR_SNAPSHOT_API_KEY: ${SNAPSHOT_API_KEY:-}
     command: >
@@ -811,7 +811,7 @@ services:
       CH_DB: ${CH_DB}
       CH_SECURE: ${CH_SECURE}
       CH_VERIFY: "False"
-      CH_QUERY_VAR_GOVERNANCE_DATABASE: ${GOVERNANCE_DATABASE:-crawlers_data}
+      CH_QUERY_VAR_GOVERNANCE_DATABASE: ${GOVERNANCE_DATABASE:-governance_db}
       CH_QUERY_VAR_DISCOURSE_BASE_URL: ${DISCOURSE_BASE_URL:-https://forum.gnosis.io}
     command: >
       --ingestor=forum
@@ -833,7 +833,7 @@ services:
       CH_DB: ${CH_DB}
       CH_SECURE: ${CH_SECURE}
       CH_VERIFY: "False"
-      CH_QUERY_VAR_GOVERNANCE_DATABASE: ${GOVERNANCE_DATABASE:-crawlers_data}
+      CH_QUERY_VAR_GOVERNANCE_DATABASE: ${GOVERNANCE_DATABASE:-governance_db}
       CH_QUERY_VAR_DISCOURSE_BASE_URL: ${DISCOURSE_BASE_URL:-https://forum.gnosis.io}
     command: >
       --ingestor=forum
@@ -857,7 +857,7 @@ services:
       CH_SECURE: ${CH_SECURE}
       CH_VERIFY: "False"
       MAINNET_RPC_URL: ${MAINNET_RPC_URL}
-      CH_QUERY_VAR_GOVERNANCE_DATABASE: ${GOVERNANCE_DATABASE:-crawlers_data}
+      CH_QUERY_VAR_GOVERNANCE_DATABASE: ${GOVERNANCE_DATABASE:-governance_db}
       CH_QUERY_VAR_SNAPSHOT_SPACE: ${SNAPSHOT_SPACE:-gnosis.eth}
     command: >
       --ingestor=snapshot-delegations
@@ -882,7 +882,7 @@ services:
       CH_SECURE: ${CH_SECURE}
       CH_VERIFY: "False"
       MAINNET_RPC_URL: ${MAINNET_RPC_URL}
-      CH_QUERY_VAR_GOVERNANCE_DATABASE: ${GOVERNANCE_DATABASE:-crawlers_data}
+      CH_QUERY_VAR_GOVERNANCE_DATABASE: ${GOVERNANCE_DATABASE:-governance_db}
       CH_QUERY_VAR_SNAPSHOT_SPACE: ${SNAPSHOT_SPACE:-gnosis.eth}
     command: >
       --ingestor=snapshot-delegations

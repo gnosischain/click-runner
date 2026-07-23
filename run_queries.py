@@ -511,7 +511,7 @@ def run_cow_ingestor(args, client, query_vars):
 
 def run_snapshot_ingestor(args, client, query_vars):
     """Run the Snapshot (off-chain governance) ingestor"""
-    database = query_vars.get("GOVERNANCE_DATABASE", "crawlers_data")
+    database = query_vars.get("GOVERNANCE_DATABASE", "governance_db")
     space = query_vars.get("SNAPSHOT_SPACE", "gnosis.eth")
     api_key = query_vars.get("SNAPSHOT_API_KEY") or None
     graphql_url = query_vars.get("SNAPSHOT_GRAPHQL_URL") or None
@@ -538,7 +538,7 @@ def run_snapshot_ingestor(args, client, query_vars):
 
 def run_forum_ingestor(args, client, query_vars):
     """Run the Gnosis Forum (Discourse) ingestor"""
-    database = query_vars.get("GOVERNANCE_DATABASE", "crawlers_data")
+    database = query_vars.get("GOVERNANCE_DATABASE", "governance_db")
     base_url = query_vars.get("DISCOURSE_BASE_URL", "https://forum.gnosis.io")
 
     ingestor = ForumIngestor(
@@ -577,7 +577,7 @@ def run_snapshot_delegations_ingestor(args, client, query_vars):
     database = (
         query_vars.get("GOVERNANCE_DATABASE")
         or os.getenv("GOVERNANCE_DATABASE")
-        or "crawlers_data"
+        or "governance_db"
     )
     space = (
         query_vars.get("SNAPSHOT_SPACE")

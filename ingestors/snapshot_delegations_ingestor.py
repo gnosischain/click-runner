@@ -22,7 +22,7 @@ Optional: --delegations-dry-run (no ClickHouse writes), --delegations-csv.
 
 Env:
   MAINNET_RPC_URL          required JSON-RPC endpoint with historical eth_getLogs
-  GOVERNANCE_DATABASE      target DB (default crawlers_data)
+  GOVERNANCE_DATABASE      target DB (default governance_db)
   SNAPSHOT_SPACE           space id string (default gnosis.eth)
   DELEGATIONS_FROM_BLOCK   optional override of the registry deploy block
 """
