@@ -8,7 +8,6 @@ from .parquet_ingestor import ParquetIngestor
 from .gdrive_ingestor import GDriveIngestor
 from .mixpanel_ingestor import MixpanelIngestor
 from .snapshot_ingestor import SnapshotIngestor
-from .snapshot_delegations_ingestor import SnapshotDelegationsIngestor
 from .forum_ingestor import ForumIngestor
 
 __all__ = [
@@ -18,6 +17,5 @@ __all__ = [
     "GDriveIngestor",
     "MixpanelIngestor",
     "SnapshotIngestor",
-    "SnapshotDelegationsIngestor",
     "ForumIngestor",
 ]
