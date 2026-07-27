@@ -744,5 +744,98 @@ services:
       DUNE_EXECUTE_ONLY_QUERY_IDS: ${DUNE_EXECUTE_ONLY_QUERY_IDS}
     command: >
       --ingestor=dune-execute-only
-      
-  
+
+  # Governance / Community ingestion (Snapshot + Gnosis Forum)
+  # Dev: set GOVERNANCE_DATABASE=playground_max (and CH_DB=playground_max) in .env.
+  # Prod: GOVERNANCE_DATABASE=governance_db (default).
+
+  # Snapshot governance — one-time backfill (all proposals + votes + follows)
+  governance-snapshot-backfill-ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: governance-snapshot-backfill-ingestor
+    volumes:
+      - ./queries:/app/queries
+    environment:
+      CH_HOST: ${CH_DB_HOST}
+      CH_PORT: ${CH_NATIVE_PORT}
+      CH_USER: ${CH_USER}
+      CH_PASSWORD: ${CH_PASSWORD}
+      CH_DB: ${CH_DB}
+      CH_SECURE: ${CH_SECURE}
+      CH_VERIFY: "False"
+      CH_QUERY_VAR_GOVERNANCE_DATABASE: ${GOVERNANCE_DATABASE:-governance_db}
+      CH_QUERY_VAR_SNAPSHOT_SPACE: ${SNAPSHOT_SPACE:-gnosis.eth}
+      CH_QUERY_VAR_SNAPSHOT_API_KEY: ${SNAPSHOT_API_KEY:-}
+    command: >
+      --ingestor=snapshot
+      --snapshot-mode=backfill
+
+  # Snapshot governance — recurring daily (open + recently-closed proposals)
+  governance-snapshot-daily-ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: governance-snapshot-daily-ingestor
+    volumes:
+      - ./queries:/app/queries
+    environment:
+      CH_HOST: ${CH_DB_HOST}
+      CH_PORT: ${CH_NATIVE_PORT}
+      CH_USER: ${CH_USER}
+      CH_PASSWORD: ${CH_PASSWORD}
+      CH_DB: ${CH_DB}
+      CH_SECURE: ${CH_SECURE}
+      CH_VERIFY: "False"
+      CH_QUERY_VAR_GOVERNANCE_DATABASE: ${GOVERNANCE_DATABASE:-governance_db}
+      CH_QUERY_VAR_SNAPSHOT_SPACE: ${SNAPSHOT_SPACE:-gnosis.eth}
+      CH_QUERY_VAR_SNAPSHOT_API_KEY: ${SNAPSHOT_API_KEY:-}
+    command: >
+      --ingestor=snapshot
+      --snapshot-mode=daily
+
+  # Gnosis Forum (Discourse) — one-time backfill (all topics + posts + users)
+  governance-forum-backfill-ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: governance-forum-backfill-ingestor
+    volumes:
+      - ./queries:/app/queries
+    environment:
+      CH_HOST: ${CH_DB_HOST}
+      CH_PORT: ${CH_NATIVE_PORT}
+      CH_USER: ${CH_USER}
+      CH_PASSWORD: ${CH_PASSWORD}
+      CH_DB: ${CH_DB}
+      CH_SECURE: ${CH_SECURE}
+      CH_VERIFY: "False"
+      CH_QUERY_VAR_GOVERNANCE_DATABASE: ${GOVERNANCE_DATABASE:-governance_db}
+      CH_QUERY_VAR_DISCOURSE_BASE_URL: ${DISCOURSE_BASE_URL:-https://forum.gnosis.io}
+    command: >
+      --ingestor=forum
+      --forum-mode=backfill
+
+  # Gnosis Forum (Discourse) — recurring daily (topics bumped since watermark)
+  governance-forum-daily-ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: governance-forum-daily-ingestor
+    volumes:
+      - ./queries:/app/queries
+    environment:
+      CH_HOST: ${CH_DB_HOST}
+      CH_PORT: ${CH_NATIVE_PORT}
+      CH_USER: ${CH_USER}
+      CH_PASSWORD: ${CH_PASSWORD}
+      CH_DB: ${CH_DB}
+      CH_SECURE: ${CH_SECURE}
+      CH_VERIFY: "False"
+      CH_QUERY_VAR_GOVERNANCE_DATABASE: ${GOVERNANCE_DATABASE:-governance_db}
+      CH_QUERY_VAR_DISCOURSE_BASE_URL: ${DISCOURSE_BASE_URL:-https://forum.gnosis.io}
+    command: >
+      --ingestor=forum
+      --forum-mode=daily
+
