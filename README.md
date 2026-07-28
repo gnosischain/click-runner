@@ -337,6 +337,68 @@ docker-compose run --rm ember-ingestor
 docker-compose run --rm probelab-agent-semvers-ingestor
 ```
 
+## External prices standbein (DefiLlama + CoinGecko)
+
+Phase 1 parallel feed for cross-check / future hub fallback. **Does not** change
+`int_execution_token_prices_daily` priority logic. Allowlist:
+`config/external_prices_tokens.yml`.
+
+| Mode | What it does |
+|------|----------------|
+| `backfill` | ~365d history (1 chart call per token) into `crawlers_data.defillama_prices` / `coingecko_prices` |
+| `daily` | Current spot batch (1 DefiLlama call + 1 CoinGecko call) |
+
+**Env vars**
+
+- ClickHouse: usual `CH_*` / compose `CH_DB_HOST`, etc.
+- `COINGECKO_API_KEY` (optional Demo key) — also accepted as `CH_QUERY_VAR_COINGECKO_API_KEY`
+- `EXTERNAL_PRICES_SOURCE` — `defillama` \| `coingecko` \| `both` (default `both`)
+- `EXTERNAL_PRICES_MODE` — `daily` \| `backfill`
+- `EXTERNAL_PRICES_DATABASE` — target DB (default `crawlers_data`; use `playground_max` for Max-dev)
+
+**CLI**
+
+```bash
+# One-time history (Max-dev: write to playground_max — no CREATE on crawlers_data)
+python run_queries.py --ingestor=external-prices \
+  --external-prices-source=both --external-prices-mode=backfill \
+  --external-prices-database=playground_max \
+  --external-prices-tokens-config=config/external_prices_tokens.yml
+
+# Daily spot
+python run_queries.py --ingestor=external-prices \
+  --external-prices-source=both --external-prices-mode=daily \
+  --external-prices-database=playground_max \
+  --external-prices-tokens-config=config/external_prices_tokens.yml
+```
+
+**dbt source schema** (must match ingest DB):
+
+```bash
+# PowerShell
+$env:DBT_EXTERNAL_PRICES_SCHEMA = "playground_max"
+```
+
+**Docker Compose**
+
+```bash
+docker-compose run --rm external-prices-backfill-ingestor
+docker-compose run --rm external-prices-daily-ingestor
+```
+
+**dbt (after ingest)** — target `pg_max`; set `DBT_EXTERNAL_PRICES_SCHEMA=playground_max` so staging reads the tables you just wrote:
+
+```bash
+dbt run -s stg_crawlers_data__defillama_prices stg_crawlers_data__coingecko_prices \
+  int_execution_token_prices_external_daily int_execution_token_prices_compare \
+  --target pg_max
+```
+
+Hub Phase 2a: `int_execution_token_prices_daily` picks off-chain as
+DefiLlama (confidence >= 0.9) > CoinGecko > Dune at priority 3 (below native /
+backedfi). Keep `int_execution_token_prices_compare` for QA. K8s CronJob +
+prod `crawlers_data` writes are still deferred (dev uses `playground_max`).
+
 ## Troubleshooting
 
 ### Common Issues
@@ -352,6 +414,10 @@ docker-compose run --rm probelab-agent-semvers-ingestor
 3. **Invalid SQL Syntax**:
    - Inspect SQL files for errors
    - Use ClickHouse client directly to test queries
+
+4. **External prices HTTP 429**:
+   - Slow down / re-run; set `COINGECKO_API_KEY` (Demo) for higher CoinGecko limits
+   - DefiLlama backfill already sleeps between chart calls
 
 ### Logs
 

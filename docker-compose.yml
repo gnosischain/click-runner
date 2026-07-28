@@ -745,6 +745,7 @@ services:
     command: >
       --ingestor=dune-execute-only
 
+<<<<<<< HEAD
   # Governance / Community ingestion (Snapshot + Gnosis Forum)
   # Dev: set GOVERNANCE_DATABASE=playground_max (and CH_DB=playground_max) in .env.
   # Prod: GOVERNANCE_DATABASE=governance_db (default).
@@ -757,6 +758,17 @@ services:
     container_name: governance-snapshot-backfill-ingestor
     volumes:
       - ./queries:/app/queries
+=======
+  # External price standbein (DefiLlama + CoinGecko) — Phase 1 parallel feed
+  external-prices-daily-ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: external-prices-daily-ingestor
+    volumes:
+      - ./queries:/app/queries
+      - ./config:/app/config
+>>>>>>> ec72d46 (add more external price sources)
     environment:
       CH_HOST: ${CH_DB_HOST}
       CH_PORT: ${CH_NATIVE_PORT}
@@ -765,6 +777,7 @@ services:
       CH_DB: ${CH_DB}
       CH_SECURE: ${CH_SECURE}
       CH_VERIFY: "False"
+<<<<<<< HEAD
       CH_QUERY_VAR_GOVERNANCE_DATABASE: ${GOVERNANCE_DATABASE:-governance_db}
       CH_QUERY_VAR_SNAPSHOT_SPACE: ${SNAPSHOT_SPACE:-gnosis.eth}
       CH_QUERY_VAR_SNAPSHOT_API_KEY: ${SNAPSHOT_API_KEY:-}
@@ -780,6 +793,28 @@ services:
     container_name: governance-snapshot-daily-ingestor
     volumes:
       - ./queries:/app/queries
+=======
+      CH_QUERY_VAR_COINGECKO_API_KEY: ${COINGECKO_API_KEY:-}
+      COINGECKO_API_KEY: ${COINGECKO_API_KEY:-}
+      EXTERNAL_PRICES_SOURCE: both
+      EXTERNAL_PRICES_MODE: daily
+      EXTERNAL_PRICES_DATABASE: ${EXTERNAL_PRICES_DATABASE:-crawlers_data}
+    command: >
+      --ingestor=external-prices
+      --external-prices-source=both
+      --external-prices-mode=daily
+      --external-prices-database=${EXTERNAL_PRICES_DATABASE:-crawlers_data}
+      --external-prices-tokens-config=config/external_prices_tokens.yml
+
+  external-prices-backfill-ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: external-prices-backfill-ingestor
+    volumes:
+      - ./queries:/app/queries
+      - ./config:/app/config
+>>>>>>> ec72d46 (add more external price sources)
     environment:
       CH_HOST: ${CH_DB_HOST}
       CH_PORT: ${CH_NATIVE_PORT}
@@ -788,6 +823,7 @@ services:
       CH_DB: ${CH_DB}
       CH_SECURE: ${CH_SECURE}
       CH_VERIFY: "False"
+<<<<<<< HEAD
       CH_QUERY_VAR_GOVERNANCE_DATABASE: ${GOVERNANCE_DATABASE:-governance_db}
       CH_QUERY_VAR_SNAPSHOT_SPACE: ${SNAPSHOT_SPACE:-gnosis.eth}
       CH_QUERY_VAR_SNAPSHOT_API_KEY: ${SNAPSHOT_API_KEY:-}
@@ -839,3 +875,16 @@ services:
       --ingestor=forum
       --forum-mode=daily
 
+=======
+      CH_QUERY_VAR_COINGECKO_API_KEY: ${COINGECKO_API_KEY:-}
+      COINGECKO_API_KEY: ${COINGECKO_API_KEY:-}
+      EXTERNAL_PRICES_SOURCE: both
+      EXTERNAL_PRICES_MODE: backfill
+      EXTERNAL_PRICES_DATABASE: ${EXTERNAL_PRICES_DATABASE:-crawlers_data}
+    command: >
+      --ingestor=external-prices
+      --external-prices-source=both
+      --external-prices-mode=backfill
+      --external-prices-database=${EXTERNAL_PRICES_DATABASE:-crawlers_data}
+      --external-prices-tokens-config=config/external_prices_tokens.yml
+>>>>>>> ec72d46 (add more external price sources)

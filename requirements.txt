@@ -9,5 +9,6 @@ google-auth
 google-auth-oauthlib
 google-auth-httplib2
 requests
+PyYAML>=6.0
 curl_cffi==0.15.0
 prometheus_client==0.21.0
