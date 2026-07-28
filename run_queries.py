@@ -16,12 +16,9 @@ from ingestors.gdrive_ingestor import GDriveIngestor
 from ingestors.mixpanel_ingestor import MixpanelIngestor
 from ingestors.mixpanel_profiles_ingestor import MixpanelProfilesIngestor
 from ingestors.cow_ingestor import CowIngestor
-<<<<<<< HEAD
 from ingestors.snapshot_ingestor import SnapshotIngestor
 from ingestors.forum_ingestor import ForumIngestor
-=======
 from ingestors.external_prices_ingestor import ExternalPricesIngestor
->>>>>>> ec72d46 (add more external price sources)
 
 logger = logging.getLogger("clickhouse_runner")
 
@@ -127,11 +124,7 @@ def create_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--verify", default=os.getenv("CH_VERIFY", "True"), help="Verify TLS certificate")
     
     # Ingestor parameters
-<<<<<<< HEAD
-    parser.add_argument("--ingestor", choices=["csv", "parquet", "gdrive", "query", "dune-execute-only", "mixpanel", "mixpanel-profiles", "cow", "snapshot", "forum"], default="query",
-=======
-    parser.add_argument("--ingestor", choices=["csv", "parquet", "gdrive", "query", "dune-execute-only", "mixpanel", "mixpanel-profiles", "cow", "external-prices"], default="query",
->>>>>>> ec72d46 (add more external price sources)
+    parser.add_argument("--ingestor", choices=["csv", "parquet", "gdrive", "query", "dune-execute-only", "mixpanel", "mixpanel-profiles", "cow", "snapshot", "forum", "external-prices"], default="query",
                        help="Type of ingestor to use")
     
     # CSV ingestor parameters
@@ -184,7 +177,6 @@ def create_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--cow-max-pages", type=int, default=500,
                        help="Max API pages per owner (each page = 1000 trades, default: 500 = 500k trades)")
 
-<<<<<<< HEAD
     # Snapshot (governance) ingestor parameters
     parser.add_argument("--snapshot-mode", choices=["daily", "backfill"], default="daily",
                        help="Snapshot ingestion mode: backfill (all proposals+votes) or "
@@ -199,7 +191,7 @@ def create_argparser() -> argparse.ArgumentParser:
                             "(topics bumped since the stored watermark)")
     parser.add_argument("--forum-max-pages", type=int, default=400,
                        help="Max /latest.json pages to crawl (30 topics/page, default: 400)")
-=======
+
     # External prices (DefiLlama + CoinGecko) standbein
     parser.add_argument("--external-prices-source", choices=["defillama", "coingecko", "both"],
                        default=os.getenv("EXTERNAL_PRICES_SOURCE", "both"),
@@ -217,7 +209,6 @@ def create_argparser() -> argparse.ArgumentParser:
                        default=os.getenv("EXTERNAL_PRICES_DATABASE", "crawlers_data"),
                        help="ClickHouse database for defillama_prices / coingecko_prices "
                             "(use playground_max for local Max-dev; crawlers_data in prod)")
->>>>>>> ec72d46 (add more external price sources)
 
     return parser
 
@@ -519,7 +510,6 @@ def run_cow_ingestor(args, client, query_vars):
         return ingestor.ingest(skip_table_creation=args.skip_table_creation)
 
 
-<<<<<<< HEAD
 def run_snapshot_ingestor(args, client, query_vars):
     """Run the Snapshot (off-chain governance) ingestor"""
     database = query_vars.get("GOVERNANCE_DATABASE", "governance_db")
@@ -567,7 +557,9 @@ def run_forum_ingestor(args, client, query_vars):
 
     obs.update_health(table_name=f"{database}.forum_topics")
     with obs.time_operation(obs.get_job_name(), "forum", "ingest"):
-=======
+        return ingestor.ingest(skip_table_creation=args.skip_table_creation)
+
+
 def run_external_prices_ingestor(args, client, query_vars):
     """Run DefiLlama / CoinGecko external price standbein ingest."""
     api_key = (
@@ -608,7 +600,6 @@ def run_external_prices_ingestor(args, client, query_vars):
         tables.append(coingecko_table)
     obs.update_health(table_name=",".join(tables))
     with obs.time_operation(obs.get_job_name(), "external-prices", "ingest"):
->>>>>>> ec72d46 (add more external price sources)
         return ingestor.ingest(skip_table_creation=args.skip_table_creation)
 
 
@@ -673,15 +664,12 @@ def main():
             success = run_mixpanel_profiles_ingestor(args, client, query_variables)
         elif args.ingestor == "cow":
             success = run_cow_ingestor(args, client, query_variables)
-<<<<<<< HEAD
         elif args.ingestor == "snapshot":
             success = run_snapshot_ingestor(args, client, query_variables)
         elif args.ingestor == "forum":
             success = run_forum_ingestor(args, client, query_variables)
-=======
         elif args.ingestor == "external-prices":
             success = run_external_prices_ingestor(args, client, query_variables)
->>>>>>> ec72d46 (add more external price sources)
         elif args.ingestor == "dune-execute-only":
             success = run_dune_execute_only(args, client, query_variables)
         else:  # "query"
