@@ -345,15 +345,37 @@ Phase 1 parallel feed for cross-check / future hub fallback. **Does not** change
 
 | Mode | What it does |
 |------|----------------|
-| `backfill` | ~365d history (1 chart call per token) into `crawlers_data.defillama_prices` / `coingecko_prices` |
-| `daily` | Current spot batch (1 DefiLlama call + 1 CoinGecko call) |
+| `backfill` | Daily history into `crawlers_data.defillama_prices` / `coingecko_prices`. DefiLlama: `~365d`, or all history with `--external-prices-defillama-full-history` (pages `/chart` backwards; it caps a request at 500 points). CoinGecko: `365d` max on the free tier — for full history use [`scripts/full_history_coingecko_prices.py`](scripts/README.md) |
+| `daily` | One settled day, `00:00 UTC` (default: yesterday). DefiLlama `/prices/historical` batched; CoinGecko `/coins/{id}/history` per token |
+
+Every row is the price at **`00:00 UTC` of its `block_date`** — i.e. the close of
+the previous day. Both sources are anchored to that same boundary, which is what
+makes them comparable (median disagreement 0.043% across 34 tokens on one day).
+
+Two things that are easy to get wrong here, both guarded in the code:
+
+- Neither daily source may use a "current price" endpoint. Those return a live
+  tick, which stamps an intraday price under a whole-day `block_date` — the
+  basis then depends on when cron happened to run.
+- DefiLlama answers a `00:00` request with the last tick *before* it
+  (e.g. `23:59:04` the previous day). Taking `block_date` from the returned
+  timestamp lands every row a day early.
+
+Both tables are plain `MergeTree` and do not dedupe, so every write path
+inserts first and then prunes superseded rows — re-running any mode is safe.
 
 **Env vars**
 
 - ClickHouse: usual `CH_*` / compose `CH_DB_HOST`, etc.
-- `COINGECKO_API_KEY` (optional Demo key) — also accepted as `CH_QUERY_VAR_COINGECKO_API_KEY`
+- `COINGECKO_API_KEY` — Demo key. Effectively **required** for `daily`: it makes
+  one `/history` call per token, and the keyless tier throttles hard enough that
+  a run cannot finish. Also accepted as `CH_QUERY_VAR_COINGECKO_API_KEY`
 - `EXTERNAL_PRICES_SOURCE` — `defillama` \| `coingecko` \| `both` (default `both`)
 - `EXTERNAL_PRICES_MODE` — `daily` \| `backfill`
+- `EXTERNAL_PRICES_DAILY_LAG_DAYS` — which UTC day `daily` writes, days back from
+  today (default `1`). `0` is also correct when the job runs well after midnight
+- `EXTERNAL_PRICES_DEFILLAMA_FULL_HISTORY` — `backfill` pages back to each
+  token's first price instead of `--external-prices-chart-span-days`
 - `EXTERNAL_PRICES_DATABASE` — target DB (default `crawlers_data`; use `playground_max` for Max-dev)
 
 **CLI**

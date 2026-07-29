@@ -205,6 +205,16 @@ def create_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--external-prices-chart-span-days", type=int,
                        default=int(os.getenv("EXTERNAL_PRICES_CHART_SPAN_DAYS", "365")),
                        help="Chart history span in days for backfill (CoinGecko free max 365)")
+    parser.add_argument("--external-prices-daily-lag-days", type=int,
+                       default=int(os.getenv("EXTERNAL_PRICES_DAILY_LAG_DAYS", "1")),
+                       help="Which UTC day the daily run writes, as days back from today "
+                            "(default 1 = yesterday). Both sources return a settled 00:00 UTC "
+                            "value, so 0 also works when the job runs well after midnight UTC")
+    parser.add_argument("--external-prices-defillama-full-history", action="store_true",
+                       default=os.getenv("EXTERNAL_PRICES_DEFILLAMA_FULL_HISTORY", "").lower() in ("true", "1", "yes"),
+                       help="Backfill mode: page /chart backwards to each token's first price "
+                            "instead of only --external-prices-chart-span-days. DefiLlama caps a "
+                            "request at 500 points, so deep history needs several windows per token")
     parser.add_argument("--external-prices-database",
                        default=os.getenv("EXTERNAL_PRICES_DATABASE", "crawlers_data"),
                        help="ClickHouse database for defillama_prices / coingecko_prices "
@@ -589,6 +599,8 @@ def run_external_prices_ingestor(args, client, query_vars):
         mode=args.external_prices_mode,
         coingecko_api_key=api_key,
         chart_span_days=args.external_prices_chart_span_days,
+        daily_lag_days=args.external_prices_daily_lag_days,
+        defillama_full_history=args.external_prices_defillama_full_history,
         defillama_table=defillama_table,
         coingecko_table=coingecko_table,
     )
