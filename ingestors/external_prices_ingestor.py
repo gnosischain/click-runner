@@ -9,6 +9,7 @@ the dbt price hub.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -39,6 +40,10 @@ LLAMA_CHAIN_ALIASES = {
 
 INSERT_BATCH_SIZE = 5000
 INSERT_SETTINGS = {"optimize_on_insert": 0, "max_insert_threads": 1}
+# coins x span per /chart request; DefiLlama rejects anything above this.
+LLAMA_MAX_CHART_POINTS = 500
+SECONDS_PER_DAY = 86400
+HEX_ADDRESS = re.compile(r"^0x[0-9a-f]+$")
 
 # Chart / market_chart calls are heavier; daily batch is a single request.
 BACKFILL_DELAY_S = 1.2
@@ -168,6 +173,18 @@ class ExternalPricesIngestor(BaseIngestor):
         after midnight UTC; the lag exists for headroom, not correctness.
         """
         return datetime.now(timezone.utc).date() - timedelta(days=self.daily_lag_days)
+
+    @staticmethod
+    def _boundary_date(ts: int) -> date:
+        """Snap a chart point to the UTC midnight boundary it represents.
+
+        DefiLlama answers a 00:00 request with the last tick before it
+        (e.g. 23:59:04 the previous day), so the calendar day the raw timestamp
+        falls in is one day early. Rounding to the nearest midnight recovers the
+        boundary that was actually asked for.
+        """
+        snapped = round(ts / SECONDS_PER_DAY) * SECONDS_PER_DAY
+        return datetime.fromtimestamp(snapped, tz=timezone.utc).date()
 
     @staticmethod
     def _utc_midnight_ts(block_date: date) -> int:
@@ -315,12 +332,22 @@ class ExternalPricesIngestor(BaseIngestor):
 
     def _defillama_backfill(self, tokens: Sequence[Dict[str, Any]]) -> bool:
         now = datetime.now(timezone.utc).replace(tzinfo=None)
+        # Anchor the series to UTC midnight. Without an explicit `start`,
+        # /chart walks back in 24h steps from the moment of the call, so the
+        # same block_date got a different price depending on when cron ran
+        # (~1.1% spread observed across three calls on one day).
+        span = min(self.chart_span_days + 1, LLAMA_MAX_CHART_POINTS)
+        start_date = datetime.now(timezone.utc).date() - timedelta(days=span - 1)
+        start_ts = self._utc_midnight_ts(start_date)
+
         all_rows: List[Tuple] = []
+        written: set = set()
+        max_date: Optional[date] = None
         for t in tokens:
             coin = self._llama_coin_key(t)
             url = (
                 f"{DEFILLAMA_BASE}/chart/{coin}"
-                f"?period=1d&span={self.chart_span_days}"
+                f"?start={start_ts}&span={span}&period=1d"
             )
             payload = self._get_json(url, delay_s=BACKFILL_DELAY_S)
             if not payload:
@@ -333,7 +360,7 @@ class ExternalPricesIngestor(BaseIngestor):
                 price = pt.get("price")
                 if ts is None or price is None:
                     continue
-                block_date = datetime.fromtimestamp(int(ts), tz=timezone.utc).date()
+                block_date = self._boundary_date(int(ts))
                 all_rows.append(
                     (
                         block_date,
@@ -345,6 +372,10 @@ class ExternalPricesIngestor(BaseIngestor):
                         now,
                     )
                 )
+                if max_date is None or block_date > max_date:
+                    max_date = block_date
+            if prices:
+                written.add(t["address"])
             logger.info(
                 "DefiLlama backfill %s: %s points",
                 t["symbol"],
@@ -355,12 +386,41 @@ class ExternalPricesIngestor(BaseIngestor):
         if not all_rows:
             logger.error("DefiLlama backfill produced zero rows")
             return False
-        return self._insert_rows(
+        if not self._insert_rows(
             self.defillama_table,
             ["block_date", "chain", "token_address", "symbol", "price", "confidence", "ingested_at"],
             all_rows,
             source="defillama",
+        ):
+            return False
+        # Scoped to tokens that actually returned data, so a token whose fetch
+        # failed keeps its existing rows instead of being silently emptied.
+        self._prune_defillama_backfill(written, max_date, now)
+        return True
+
+    def _prune_defillama_backfill(
+        self, addresses: set, max_date: Optional[date], ingested_at: datetime
+    ) -> None:
+        safe = sorted(a for a in addresses if HEX_ADDRESS.match(a))
+        skipped = sorted(set(addresses) - set(safe))
+        if skipped:
+            logger.warning("Not pruning unexpected token_address values: %s", skipped)
+        if not safe or max_date is None:
+            return
+        quoted = ",".join(f"'{a}'" for a in safe)
+        sql = (
+            f"ALTER TABLE {self.defillama_table} DELETE WHERE token_address IN ({quoted}) "
+            f"AND block_date <= toDate('{max_date.isoformat()}') "
+            f"AND ingested_at < toDateTime('{ingested_at.strftime('%Y-%m-%d %H:%M:%S')}')"
         )
+        try:
+            self.client.command(sql, settings={"mutations_sync": 2})
+        except Exception as e:
+            logger.error(
+                "Prune of superseded DefiLlama backfill rows failed: %s",
+                e,
+                extra={"event": "external_prices_prune_failure", "source": "defillama"},
+            )
 
     # ------------------------------------------------------------------
     # CoinGecko
