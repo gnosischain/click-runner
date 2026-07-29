@@ -1,0 +1,246 @@
+# Allowlist for external price standbein (DefiLlama + CoinGecko).
+# Skip aTokens/spTokens (inherit underlying in the hub). Omit known API gaps
+# (GBPe, BRZ, sGNO, OC-sDAI, svZCHF, bC3M) until a source covers them.
+#
+# chain: defillama prefix (gnosis|ethereum|base|arbitrum). Default: gnosis.
+#   Raw table keeps chain; dbt staging collapses to (date, symbol) for the hub.
+# coingecko_id: required when coingecko: true (asset-level; deduped across chains)
+# address: required when defillama: true (checksum or lowercase OK)
+# CoinGecko ids verified via /coins/{platform}/contract/{address} + market_chart.
+
+tokens:
+  - symbol: xDAI
+    chain: gnosis
+    address: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    coingecko_id: null
+    defillama: true
+    coingecko: false
+
+  - symbol: WxDAI
+    address: "0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d"
+    # CG lists this contract as id `xdai` (not wrapped-xdai).
+    coingecko_id: xdai
+    defillama: true
+    coingecko: true
+
+  - symbol: GNO
+    address: "0x9c58bacc331c9aa871afd802db6379a98e80cedb"
+    coingecko_id: gnosis
+    defillama: true
+    coingecko: true
+
+  - symbol: sDAI
+    address: "0xaf204776c7245bF4147c2612BF6e5972Ee483701"
+    coingecko_id: savings-xdai
+    defillama: true
+    coingecko: true
+
+  - symbol: WETH
+    address: "0x6A023CCd1ff6F2045C3309768eAd9E68F978f6e1"
+    coingecko_id: weth
+    defillama: true
+    coingecko: true
+
+  - symbol: wstETH
+    address: "0x6c76971f98945AE98dD7D4DFcA8711ebea946eA6"
+    coingecko_id: wrapped-steth
+    defillama: true
+    coingecko: true
+
+  - symbol: WBTC
+    address: "0x8e5bBbb09Ed1ebdE8674Cda39A0c169401db4252"
+    coingecko_id: wrapped-bitcoin
+    defillama: true
+    coingecko: true
+
+  - symbol: USDC
+    address: "0xDDAfbb505ad214D7b80b1f830fcCc89B60fb7A83"
+    coingecko_id: usd-coin
+    defillama: true
+    coingecko: true
+
+  - symbol: USDC.e
+    address: "0x2a22f9c3b484c3629090FeED35F17Ff8F88f76F0"
+    coingecko_id: bridged-usdc-gnosis
+    defillama: true
+    coingecko: true
+
+  - symbol: USDT
+    address: "0x4ECaBa5870353805a9F068101A40E0f32ed605C6"
+    coingecko_id: tether
+    defillama: true
+    coingecko: true
+
+  - symbol: EURe
+    address: "0x420CA0f9B9b604cE0fd9C18EF134C705e5Fa3430"
+    coingecko_id: monerium-eur-money
+    defillama: true
+    coingecko: true
+
+  - symbol: COW
+    address: "0x177127622c4A00F3d409B75571e12cB3c8973d3c"
+    coingecko_id: cow-protocol
+    defillama: true
+    coingecko: true
+
+  - symbol: SAFE
+    address: "0x4d18815D14fe5c3304e87B3FA18318baa5c23820"
+    coingecko_id: safe
+    defillama: true
+    coingecko: true
+
+  - symbol: BRLA
+    address: "0xFECB3F7c54E2CAAE9dC6Ac9060A822D47E053760"
+    coingecko_id: brla-digital-brla
+    defillama: true
+    coingecko: true
+
+  # Ripio wFiat stables
+  - symbol: wARS
+    address: "0x0DC4F92879B7670e5f4e4e6e3c801D229129D90D"
+    coingecko_id: argentine-peso
+    defillama: true
+    coingecko: true
+
+  - symbol: wBRL
+    address: "0xD76f5Faf6888e24D9F04Bf92a0c8B921FE4390e0"
+    coingecko_id: brazilian-real
+    defillama: true
+    coingecko: true
+
+  - symbol: wMXN
+    address: "0x337e7456b420bd3481e7fa61fa9850343d610d34"
+    coingecko_id: mexican-peso
+    defillama: true
+    coingecko: true
+
+  - symbol: wCOP
+    address: "0x8a1D45e102e886510e891d2Ec656a708991e2D76"
+    coingecko_id: colombian-peso
+    defillama: true
+    coingecko: true
+
+  - symbol: wCLP
+    address: "0x61D450a098b6a7f69fC4b98CE68198fe59768651"
+    coingecko_id: chilean-peso
+    defillama: true
+    coingecko: true
+
+  - symbol: wPEN
+    address: "0x4F34c8b3b5FB6D98Da888F0feA543d4d9C9F2eBE"
+    coingecko_id: peruvian-sol
+    defillama: true
+    coingecko: true
+
+  - symbol: ZCHF
+    address: "0xd4dd9e2f021bb459d5a5f6c24c12fe09c5d45553"
+    coingecko_id: frankencoin
+    defillama: true
+    coingecko: true
+
+  - symbol: svZCHF
+    address: "0x6165946250dd04740ab1409217e95a4f38374fe9"
+    # No CoinGecko xdai contract listing / chart.
+    coingecko_id: null
+    defillama: true
+    coingecko: false
+
+  - symbol: bCSPX
+    address: "0x1e2c4fb7ede391d116e6b41cd0608260e8801d59"
+    coingecko_id: backed-cspx-core-s-p-500
+    defillama: true
+    coingecko: true
+
+  - symbol: bTSLA
+    address: "0x14a5f2872396802c3cc8942a39ab3e4118ee5038"
+    coingecko_id: backed-tesla
+    defillama: true
+    coingecko: true
+
+  - symbol: bMSTR
+    address: "0xac28c9178acc8ba4a11a29e013a3a2627086e422"
+    coingecko_id: backed-microstrategy
+    defillama: true
+    coingecko: true
+
+  - symbol: bIBTA
+    address: "0x52d134c6db5889fad3542a09eaf7aa90c0fdf9e4"
+    coingecko_id: backed-ibta-treasury-bond-1-3yr
+    defillama: true
+    coingecko: true
+
+  - symbol: bNVDA
+    address: "0xa34c5e0abe843e10461e2c9586ea03e55dbcc495"
+    coingecko_id: bndva-backed-nvidia
+    defillama: true
+    coingecko: true
+
+  - symbol: bCOIN
+    address: "0xbbcb0356bb9e6b3faa5cbf9e5f36185d53403ac9"
+    coingecko_id: backed-coinbase-global
+    defillama: true
+    coingecko: true
+
+  - symbol: bC3M
+    address: "0x2f123cf3f37ce3328cc9b5b8415f9ec5109b45e7"
+    # CG id exists but market_chart returns empty series.
+    coingecko_id: null
+    defillama: true
+    coingecko: false
+
+  - symbol: bIB01
+    address: "0xca30c93b02514f86d5c86a6e375e3a330b435fb5"
+    coingecko_id: backed-ib01-treasury-bond-0-1yr
+    defillama: true
+    coingecko: true
+
+  - symbol: bHIGH
+    address: "0x20c64dee8fda5269a78f2d5bdba861ca1d83df7a"
+    coingecko_id: backed-high-high-yield-corp-bond
+    defillama: true
+    coingecko: true
+
+  # GnosisDAO / kpk treasury-relevant (Gnosis addresses verified)
+  - symbol: HOPR
+    address: "0xD057604A14982FE8D88c5fC25Aac3267eA142a08"
+    coingecko_id: hopr
+    defillama: true
+    coingecko: true
+
+  - symbol: BAL
+    address: "0x7eF541E2a22058048904fE5744f9c7E4C57AF717"
+    coingecko_id: balancer
+    defillama: true
+    coingecko: true
+
+  - symbol: PNK
+    address: "0x37b60f4E9A31A64cCc0024dce7D0fD07eAA0F7B3"
+    coingecko_id: kleros
+    defillama: true
+    coingecko: true
+
+  - symbol: GHO
+    address: "0xfc421ad3c883bf9e7c4f42de845c4e4405799e73"
+    coingecko_id: gho
+    defillama: true
+    coingecko: true
+
+  - symbol: OSGNO
+    address: "0xf490c80aae5f2616d3e3bda2483e30c4cb21d1a0"
+    coingecko_id: stakewise-staked-gno-2
+    defillama: true
+    coingecko: true
+
+  - symbol: AURA
+    address: "0x1509706a6c66ca549ff0cb464de88231ddbe213b"
+    coingecko_id: aura-finance
+    defillama: true
+    coingecko: true
+
+  # ETH-only RWA (Anemoy LTF renamed to JTRSY). No Gnosis deployment.
+  - symbol: JTRSY
+    chain: ethereum
+    address: "0x8c213ee79581Ff4984583C6a801e5263418C4b86"
+    coingecko_id: janus-henderson-anemoy-treasury-fund
+    defillama: true
+    coingecko: true

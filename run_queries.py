@@ -18,6 +18,7 @@ from ingestors.mixpanel_profiles_ingestor import MixpanelProfilesIngestor
 from ingestors.cow_ingestor import CowIngestor
 from ingestors.snapshot_ingestor import SnapshotIngestor
 from ingestors.forum_ingestor import ForumIngestor
+from ingestors.external_prices_ingestor import ExternalPricesIngestor
 
 logger = logging.getLogger("clickhouse_runner")
 
@@ -123,7 +124,7 @@ def create_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--verify", default=os.getenv("CH_VERIFY", "True"), help="Verify TLS certificate")
     
     # Ingestor parameters
-    parser.add_argument("--ingestor", choices=["csv", "parquet", "gdrive", "query", "dune-execute-only", "mixpanel", "mixpanel-profiles", "cow", "snapshot", "forum"], default="query",
+    parser.add_argument("--ingestor", choices=["csv", "parquet", "gdrive", "query", "dune-execute-only", "mixpanel", "mixpanel-profiles", "cow", "snapshot", "forum", "external-prices"], default="query",
                        help="Type of ingestor to use")
     
     # CSV ingestor parameters
@@ -190,6 +191,24 @@ def create_argparser() -> argparse.ArgumentParser:
                             "(topics bumped since the stored watermark)")
     parser.add_argument("--forum-max-pages", type=int, default=400,
                        help="Max /latest.json pages to crawl (30 topics/page, default: 400)")
+
+    # External prices (DefiLlama + CoinGecko) standbein
+    parser.add_argument("--external-prices-source", choices=["defillama", "coingecko", "both"],
+                       default=os.getenv("EXTERNAL_PRICES_SOURCE", "both"),
+                       help="Which external price API(s) to ingest")
+    parser.add_argument("--external-prices-mode", choices=["daily", "backfill"],
+                       default=os.getenv("EXTERNAL_PRICES_MODE", "daily"),
+                       help="daily = current spot batch; backfill = ~365d chart history")
+    parser.add_argument("--external-prices-tokens-config",
+                       default=os.getenv("EXTERNAL_PRICES_TOKENS_CONFIG", "config/external_prices_tokens.yml"),
+                       help="Path to YAML allowlist of tokens to fetch")
+    parser.add_argument("--external-prices-chart-span-days", type=int,
+                       default=int(os.getenv("EXTERNAL_PRICES_CHART_SPAN_DAYS", "365")),
+                       help="Chart history span in days for backfill (CoinGecko free max 365)")
+    parser.add_argument("--external-prices-database",
+                       default=os.getenv("EXTERNAL_PRICES_DATABASE", "crawlers_data"),
+                       help="ClickHouse database for defillama_prices / coingecko_prices "
+                            "(use playground_max for local Max-dev; crawlers_data in prod)")
 
     return parser
 
@@ -541,6 +560,49 @@ def run_forum_ingestor(args, client, query_vars):
         return ingestor.ingest(skip_table_creation=args.skip_table_creation)
 
 
+def run_external_prices_ingestor(args, client, query_vars):
+    """Run DefiLlama / CoinGecko external price standbein ingest."""
+    api_key = (
+        query_vars.get("COINGECKO_API_KEY")
+        or os.getenv("COINGECKO_API_KEY")
+        or None
+    )
+    database = (args.external_prices_database or "crawlers_data").strip()
+    defillama_table = f"{database}.defillama_prices"
+    coingecko_table = f"{database}.coingecko_prices"
+    # SQL templates use {{EXTERNAL_PRICES_DATABASE}}
+    variables = {**query_vars, "EXTERNAL_PRICES_DATABASE": database}
+
+    logger.info(
+        "External prices: source=%s mode=%s database=%s coingecko_key=%s",
+        args.external_prices_source,
+        args.external_prices_mode,
+        database,
+        "configured" if api_key else "not set (keyless)",
+    )
+
+    ingestor = ExternalPricesIngestor(
+        client=client,
+        variables=variables,
+        tokens_config=args.external_prices_tokens_config,
+        source=args.external_prices_source,
+        mode=args.external_prices_mode,
+        coingecko_api_key=api_key,
+        chart_span_days=args.external_prices_chart_span_days,
+        defillama_table=defillama_table,
+        coingecko_table=coingecko_table,
+    )
+
+    tables = []
+    if args.external_prices_source in ("defillama", "both"):
+        tables.append(defillama_table)
+    if args.external_prices_source in ("coingecko", "both"):
+        tables.append(coingecko_table)
+    obs.update_health(table_name=",".join(tables))
+    with obs.time_operation(obs.get_job_name(), "external-prices", "ingest"):
+        return ingestor.ingest(skip_table_creation=args.skip_table_creation)
+
+
 def main():
     """Main entry point"""
     obs.setup_logging()
@@ -606,6 +668,8 @@ def main():
             success = run_snapshot_ingestor(args, client, query_variables)
         elif args.ingestor == "forum":
             success = run_forum_ingestor(args, client, query_variables)
+        elif args.ingestor == "external-prices":
+            success = run_external_prices_ingestor(args, client, query_variables)
         elif args.ingestor == "dune-execute-only":
             success = run_dune_execute_only(args, client, query_variables)
         else:  # "query"

@@ -12,6 +12,7 @@ COPY observability.py .
 COPY __init__.py .
 COPY ingestors/ ./ingestors/
 COPY utils/ ./utils/
+COPY config/ ./config/
 
 # Create directory for queries
 COPY queries/ ./queries/
