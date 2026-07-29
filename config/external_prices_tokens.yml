@@ -2,12 +2,15 @@
 # Skip aTokens/spTokens (inherit underlying in the hub). Omit known API gaps
 # (GBPe, BRZ, sGNO, OC-sDAI, svZCHF, bC3M) until a source covers them.
 #
-# coingecko_id: required when coingecko: true
-# address: required when defillama: true (Gnosis checksum or lowercase OK)
-# CoinGecko ids verified via /coins/xdai/contract/{address} + market_chart.
+# chain: defillama prefix (gnosis|ethereum|base|arbitrum). Default: gnosis.
+#   Raw table keeps chain; dbt staging collapses to (date, symbol) for the hub.
+# coingecko_id: required when coingecko: true (asset-level; deduped across chains)
+# address: required when defillama: true (checksum or lowercase OK)
+# CoinGecko ids verified via /coins/{platform}/contract/{address} + market_chart.
 
 tokens:
   - symbol: xDAI
+    chain: gnosis
     address: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
     coingecko_id: null
     defillama: true
@@ -194,5 +197,50 @@ tokens:
   - symbol: bHIGH
     address: "0x20c64dee8fda5269a78f2d5bdba861ca1d83df7a"
     coingecko_id: backed-high-high-yield-corp-bond
+    defillama: true
+    coingecko: true
+
+  # GnosisDAO / kpk treasury-relevant (Gnosis addresses verified)
+  - symbol: HOPR
+    address: "0xD057604A14982FE8D88c5fC25Aac3267eA142a08"
+    coingecko_id: hopr
+    defillama: true
+    coingecko: true
+
+  - symbol: BAL
+    address: "0x7eF541E2a22058048904fE5744f9c7E4C57AF717"
+    coingecko_id: balancer
+    defillama: true
+    coingecko: true
+
+  - symbol: PNK
+    address: "0x37b60f4E9A31A64cCc0024dce7D0fD07eAA0F7B3"
+    coingecko_id: kleros
+    defillama: true
+    coingecko: true
+
+  - symbol: GHO
+    address: "0xfc421ad3c883bf9e7c4f42de845c4e4405799e73"
+    coingecko_id: gho
+    defillama: true
+    coingecko: true
+
+  - symbol: OSGNO
+    address: "0xf490c80aae5f2616d3e3bda2483e30c4cb21d1a0"
+    coingecko_id: stakewise-staked-gno-2
+    defillama: true
+    coingecko: true
+
+  - symbol: AURA
+    address: "0x1509706a6c66ca549ff0cb464de88231ddbe213b"
+    coingecko_id: aura-finance
+    defillama: true
+    coingecko: true
+
+  # ETH-only RWA (Anemoy LTF renamed to JTRSY). No Gnosis deployment.
+  - symbol: JTRSY
+    chain: ethereum
+    address: "0x8c213ee79581Ff4984583C6a801e5263418C4b86"
+    coingecko_id: janus-henderson-anemoy-treasury-fund
     defillama: true
     coingecko: true

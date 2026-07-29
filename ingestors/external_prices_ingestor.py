@@ -25,7 +25,17 @@ logger = logging.getLogger("clickhouse_runner")
 
 DEFILLAMA_BASE = "https://coins.llama.fi"
 COINGECKO_BASE = "https://api.coingecko.com/api/v3"
-CHAIN = "gnosis"
+DEFAULT_CHAIN = "gnosis"
+# DefiLlama coin-key prefixes (must match coins.llama.fi).
+LLAMA_CHAIN_ALIASES = {
+    "gnosis": "gnosis",
+    "xdai": "gnosis",
+    "ethereum": "ethereum",
+    "eth": "ethereum",
+    "base": "base",
+    "arbitrum": "arbitrum",
+    "arbitrum-one": "arbitrum",
+}
 
 INSERT_BATCH_SIZE = 5000
 INSERT_SETTINGS = {"optimize_on_insert": 0, "max_insert_threads": 1}
@@ -117,9 +127,12 @@ class ExternalPricesIngestor(BaseIngestor):
             symbol = str(t.get("symbol") or "").strip()
             if not symbol:
                 continue
+            raw_chain = str(t.get("chain") or DEFAULT_CHAIN).strip().lower()
+            chain = LLAMA_CHAIN_ALIASES.get(raw_chain, raw_chain)
             out.append(
                 {
                     "symbol": symbol,
+                    "chain": chain,
                     "address": (t.get("address") or "").strip().lower(),
                     "coingecko_id": (t.get("coingecko_id") or None),
                     "defillama": bool(t.get("defillama")),
@@ -128,6 +141,10 @@ class ExternalPricesIngestor(BaseIngestor):
             )
         logger.info("Loaded %s allowlisted tokens from %s", len(out), path)
         return out
+
+    @staticmethod
+    def _llama_coin_key(token: Dict[str, Any]) -> str:
+        return f"{token['chain']}:{token['address']}"
 
     # ------------------------------------------------------------------
     # HTTP
@@ -170,23 +187,26 @@ class ExternalPricesIngestor(BaseIngestor):
         return self._defillama_backfill(llama_tokens)
 
     def _defillama_daily(self, tokens: Sequence[Dict[str, Any]]) -> bool:
-        coin_keys = [f"{CHAIN}:{t['address']}" for t in tokens]
+        coin_keys = [self._llama_coin_key(t) for t in tokens]
         url = f"{DEFILLAMA_BASE}/prices/current/{','.join(coin_keys)}"
         payload = self._get_json(url, delay_s=DAILY_DELAY_S)
         if not payload:
             return False
 
         coins = payload.get("coins") or {}
-        # Map address -> allowlist symbol (API symbol casing varies).
-        by_addr = {t["address"]: t["symbol"] for t in tokens}
+        # Map llama key -> allowlist row (address alone is not unique across chains).
+        by_key = {self._llama_coin_key(t): t for t in tokens}
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         # Prefer calendar date of the quote timestamp; fall back to UTC today.
         rows: List[Tuple] = []
         for key, quote in coins.items():
-            # key like gnosis:0x...
-            addr = key.split(":", 1)[-1].lower()
-            symbol = by_addr.get(addr)
-            if not symbol:
+            # key like gnosis:0x... / ethereum:0x...
+            t = by_key.get(key.lower() if key.count(":") == 1 else key)
+            if t is None:
+                # Normalize address side to lowercase for lookup.
+                chain_part, _, addr_part = key.partition(":")
+                t = by_key.get(f"{chain_part.lower()}:{addr_part.lower()}")
+            if not t:
                 continue
             price = quote.get("price")
             if price is None:
@@ -199,18 +219,18 @@ class ExternalPricesIngestor(BaseIngestor):
             rows.append(
                 (
                     block_date,
-                    CHAIN,
-                    addr,
-                    symbol,
+                    t["chain"],
+                    t["address"],
+                    t["symbol"],
                     float(price),
                     float(quote["confidence"]) if quote.get("confidence") is not None else None,
                     now,
                 )
             )
 
-        missing = sorted(set(by_addr) - {r[2] for r in rows})
+        missing = sorted(set(by_key) - {self._llama_coin_key({"chain": r[1], "address": r[2]}) for r in rows})
         if missing:
-            logger.warning("DefiLlama daily missing %s addresses: %s", len(missing), missing[:10])
+            logger.warning("DefiLlama daily missing %s keys: %s", len(missing), missing[:10])
 
         return self._insert_rows(
             self.defillama_table,
@@ -223,7 +243,7 @@ class ExternalPricesIngestor(BaseIngestor):
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         all_rows: List[Tuple] = []
         for t in tokens:
-            coin = f"{CHAIN}:{t['address']}"
+            coin = self._llama_coin_key(t)
             url = (
                 f"{DEFILLAMA_BASE}/chart/{coin}"
                 f"?period=1d&span={self.chart_span_days}"
@@ -243,7 +263,7 @@ class ExternalPricesIngestor(BaseIngestor):
                 all_rows.append(
                     (
                         block_date,
-                        CHAIN,
+                        t["chain"],
                         t["address"],
                         t["symbol"],
                         float(price),
@@ -276,9 +296,18 @@ class ExternalPricesIngestor(BaseIngestor):
         return DAILY_DELAY_S if self.coingecko_api_key else KEYLESS_CG_DELAY_S
 
     def _ingest_coingecko(self, tokens: Sequence[Dict[str, Any]]) -> bool:
-        cg_tokens = [
-            t for t in tokens if t["coingecko"] and t.get("coingecko_id")
-        ]
+        # CoinGecko is asset-level (not chain-level). Deduplicate by coingecko_id
+        # so multi-chain allowlist rows for the same economic asset fetch once.
+        seen: set[str] = set()
+        cg_tokens: List[Dict[str, Any]] = []
+        for t in tokens:
+            if not t["coingecko"] or not t.get("coingecko_id"):
+                continue
+            cg_id = t["coingecko_id"]
+            if cg_id in seen:
+                continue
+            seen.add(cg_id)
+            cg_tokens.append(t)
         if not cg_tokens:
             logger.warning("No CoinGecko-enabled tokens with coingecko_id in allowlist")
             return True
