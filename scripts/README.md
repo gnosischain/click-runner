@@ -128,9 +128,26 @@ straight after a `TRUNCATE`), which avoids one pointless mutation per token.
   ~111 months, so inserts are chunked on month boundaries as well as row count.
   This only bites on full history — the 365-day backfill spans 13 partitions and
   never hit it.
-- **Today is excluded by default.** The last point in `stats` is a live,
-  partial-day price. The daily ingestor owns today; pass `--include-today` to
+- **Today is excluded by default — but not because it is partial.** Every point
+  in `stats`, including today's, is stamped exactly `00:00:00 UTC` and is
+  already final (verified: today's GNO point was byte-identical across two
+  fetches 25 minutes apart, and differs from the live price). It is skipped
+  because the daily ingestor already writes today and the table does not dedupe,
+  so writing it too would leave two rows for today. Pass `--include-today` to
   override.
+- **Mixed time-of-day basis with the daily ingestor.** This is the one to be
+  aware of. Everything this script writes is a `00:00 UTC` daily snapshot. The
+  daily ingestor writes the **current** day (not the previous completed one) from
+  `/simple/price`'s `last_updated_at`, which is a live tick — measured at 0.0
+  minutes old — so its rows carry whatever price held at the moment the job ran
+  (~09:42 UTC, judging by `defillama_prices`). So a date written by the daily job
+  and the same date written by this script are two different quotes.
+  Re-running this script is self-healing: the prune replaces those rows with the
+  `00:00 UTC` value. Left alone, the series silently switches basis at whatever
+  date this backfill last covered.
+- **The daily ingestor appends.** Because `coingecko_prices` does not dedupe,
+  running the daily job twice in one day leaves two rows for that date. Not
+  introduced by this script, but worth knowing when querying.
 - **Source data has early outliers.** A handful of stablecoin points from the
   first days after listing are far off peg (USDC 0.00067 on its 2018-10-04 debut,
   USDT 0.57–1.32 through 2015 and mid-2018, one WxDAI spike to 1.97 on

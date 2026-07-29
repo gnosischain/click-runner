@@ -312,7 +312,11 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p.add_argument(
         "--include-today",
         action="store_true",
-        help="Keep today's partial-day price (excluded by default; the daily ingestor owns it)",
+        help=(
+            "Also write today's point. It is a final 00:00 UTC value, not a partial one, "
+            "but the daily ingestor already writes today and the table does not dedupe, "
+            "so it is skipped by default to avoid a same-day duplicate."
+        ),
     )
     p.add_argument("--skip-table-creation", action="store_true", help="Assume the table exists")
     p.add_argument("--delay", type=float, default=REQUEST_DELAY_S, help="Seconds between requests")
