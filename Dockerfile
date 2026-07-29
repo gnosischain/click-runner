@@ -13,6 +13,7 @@ COPY __init__.py .
 COPY ingestors/ ./ingestors/
 COPY utils/ ./utils/
 COPY config/ ./config/
+COPY scripts/ ./scripts/
 
 # Create directory for queries
 COPY queries/ ./queries/
