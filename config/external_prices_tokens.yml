@@ -1,9 +1,10 @@
 # Allowlist for external price standbein (DefiLlama + CoinGecko).
 # Skip aTokens/spTokens (inherit underlying in the hub). Omit known API gaps
-# (GBPe, BRZ, sGNO, OC-sDAI) until a source covers them.
+# (GBPe, BRZ, sGNO, OC-sDAI, svZCHF, bC3M) until a source covers them.
 #
 # coingecko_id: required when coingecko: true
 # address: required when defillama: true (Gnosis checksum or lowercase OK)
+# CoinGecko ids verified via /coins/xdai/contract/{address} + market_chart.
 
 tokens:
   - symbol: xDAI
@@ -14,10 +15,10 @@ tokens:
 
   - symbol: WxDAI
     address: "0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d"
-    # No usable CoinGecko coin id (wrapped-xdai 404s on market_chart); Llama covers it.
-    coingecko_id: null
+    # CG lists this contract as id `xdai` (not wrapped-xdai).
+    coingecko_id: xdai
     defillama: true
-    coingecko: false
+    coingecko: true
 
   - symbol: GNO
     address: "0x9c58bacc331c9aa871afd802db6379a98e80cedb"
@@ -57,9 +58,9 @@ tokens:
 
   - symbol: USDC.e
     address: "0x2a22f9c3b484c3629090FeED35F17Ff8F88f76F0"
-    coingecko_id: null
+    coingecko_id: bridged-usdc-gnosis
     defillama: true
-    coingecko: false
+    coingecko: true
 
   - symbol: USDT
     address: "0x4ECaBa5870353805a9F068101A40E0f32ed605C6"
@@ -87,109 +88,111 @@ tokens:
 
   - symbol: BRLA
     address: "0xFECB3F7c54E2CAAE9dC6Ac9060A822D47E053760"
-    coingecko_id: null
+    coingecko_id: brla-digital-brla
     defillama: true
-    coingecko: false
+    coingecko: true
 
-  # Ripio wFiat stables — Llama spot/daily only (chart history ~1 point).
+  # Ripio wFiat stables
   - symbol: wARS
     address: "0x0DC4F92879B7670e5f4e4e6e3c801D229129D90D"
-    coingecko_id: null
+    coingecko_id: argentine-peso
     defillama: true
-    coingecko: false
+    coingecko: true
 
   - symbol: wBRL
     address: "0xD76f5Faf6888e24D9F04Bf92a0c8B921FE4390e0"
-    coingecko_id: null
+    coingecko_id: brazilian-real
     defillama: true
-    coingecko: false
+    coingecko: true
 
   - symbol: wMXN
     address: "0x337e7456b420bd3481e7fa61fa9850343d610d34"
-    coingecko_id: null
+    coingecko_id: mexican-peso
     defillama: true
-    coingecko: false
+    coingecko: true
 
   - symbol: wCOP
     address: "0x8a1D45e102e886510e891d2Ec656a708991e2D76"
-    coingecko_id: null
+    coingecko_id: colombian-peso
     defillama: true
-    coingecko: false
+    coingecko: true
 
   - symbol: wCLP
     address: "0x61D450a098b6a7f69fC4b98CE68198fe59768651"
-    coingecko_id: null
+    coingecko_id: chilean-peso
     defillama: true
-    coingecko: false
+    coingecko: true
 
   - symbol: wPEN
     address: "0x4F34c8b3b5FB6D98Da888F0feA543d4d9C9F2eBE"
-    coingecko_id: null
+    coingecko_id: peruvian-sol
     defillama: true
-    coingecko: false
+    coingecko: true
 
   - symbol: ZCHF
     address: "0xd4dd9e2f021bb459d5a5f6c24c12fe09c5d45553"
-    coingecko_id: null
+    coingecko_id: frankencoin
     defillama: true
-    coingecko: false
+    coingecko: true
 
   - symbol: svZCHF
     address: "0x6165946250dd04740ab1409217e95a4f38374fe9"
+    # No CoinGecko xdai contract listing / chart.
     coingecko_id: null
     defillama: true
     coingecko: false
 
   - symbol: bCSPX
     address: "0x1e2c4fb7ede391d116e6b41cd0608260e8801d59"
-    coingecko_id: null
+    coingecko_id: backed-cspx-core-s-p-500
     defillama: true
-    coingecko: false
+    coingecko: true
 
   - symbol: bTSLA
     address: "0x14a5f2872396802c3cc8942a39ab3e4118ee5038"
-    coingecko_id: null
+    coingecko_id: backed-tesla
     defillama: true
-    coingecko: false
+    coingecko: true
 
   - symbol: bMSTR
     address: "0xac28c9178acc8ba4a11a29e013a3a2627086e422"
-    coingecko_id: null
+    coingecko_id: backed-microstrategy
     defillama: true
-    coingecko: false
+    coingecko: true
 
   - symbol: bIBTA
     address: "0x52d134c6db5889fad3542a09eaf7aa90c0fdf9e4"
-    coingecko_id: null
+    coingecko_id: backed-ibta-treasury-bond-1-3yr
     defillama: true
-    coingecko: false
+    coingecko: true
 
   - symbol: bNVDA
     address: "0xa34c5e0abe843e10461e2c9586ea03e55dbcc495"
-    coingecko_id: null
+    coingecko_id: bndva-backed-nvidia
     defillama: true
-    coingecko: false
+    coingecko: true
 
   - symbol: bCOIN
     address: "0xbbcb0356bb9e6b3faa5cbf9e5f36185d53403ac9"
-    coingecko_id: null
+    coingecko_id: backed-coinbase-global
     defillama: true
-    coingecko: false
+    coingecko: true
 
   - symbol: bC3M
     address: "0x2f123cf3f37ce3328cc9b5b8415f9ec5109b45e7"
+    # CG id exists but market_chart returns empty series.
     coingecko_id: null
     defillama: true
     coingecko: false
 
   - symbol: bIB01
     address: "0xca30c93b02514f86d5c86a6e375e3a330b435fb5"
-    coingecko_id: null
+    coingecko_id: backed-ib01-treasury-bond-0-1yr
     defillama: true
-    coingecko: false
+    coingecko: true
 
   - symbol: bHIGH
     address: "0x20c64dee8fda5269a78f2d5bdba861ca1d83df7a"
-    coingecko_id: null
+    coingecko_id: backed-high-high-yield-corp-bond
     defillama: true
-    coingecko: false
+    coingecko: true
