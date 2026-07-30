@@ -561,6 +561,7 @@ def run_forum_ingestor(args, client, query_vars):
         create_topics_sql="queries/governance/create_forum_topics_table.sql",
         create_posts_sql="queries/governance/create_forum_posts_table.sql",
         create_users_sql="queries/governance/create_forum_users_table.sql",
+        create_likes_sql="queries/governance/create_forum_likes_table.sql",
         mode=args.forum_mode,
         max_pages=args.forum_max_pages,
     )
