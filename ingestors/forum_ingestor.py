@@ -2,7 +2,7 @@
 Gnosis Forum (Discourse) ingestor.
 
 Discourse serves structured JSON at the `.json` variant of every public route,
-no auth required, so we never scrape HTML. Four tables:
+no auth required, so we never scrape HTML. Six tables:
 
     <db>.forum_categories  category tree
     <db>.forum_topics      one row per topic (discussion thread)
@@ -10,6 +10,11 @@ no auth required, so we never scrape HTML. Four tables:
                            both the raw markdown (via include_raw=1) and the
                            cooked HTML rendering
     <db>.forum_users       public user directory (activity + like counts)
+    <db>.forum_likes       one row per like edge (liker → post), with the real
+                           timestamp of the like, from /user_actions.json
+    <db>.forum_polls       one row per (post, poll, option) with its vote count —
+                           the GIP temperature checks, normalised out of the post
+                           payload we already fetch
 
 Each row keeps the full API object in `raw_json` plus typed key columns, exactly
 like the Snapshot ingestor. Tables are ReplacingMergeTree(ingested_at) keyed by
@@ -21,14 +26,16 @@ Modes:
   daily     only (re)fetch topics whose bumped_at advanced past the max
             bumped_at already stored — this picks up new topics, new replies,
             and edits that bumped the thread. (Silent edits that do not bump a
-            topic are not re-captured; acceptable for v1.)
+            topic are not re-captured; acceptable for v1.) Topics with an OPEN
+            poll are the documented exception and are always refreshed, because
+            poll votes do not bump a topic and the counts would otherwise freeze.
 """
 
 import json
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import requests
 from clickhouse_connect.driver.client import Client
@@ -45,6 +52,13 @@ POST_IDS_CHUNK = 50
 # (naive 1970-01-01 crashes clickhouse-connect's DateTime write on Windows).
 EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 LIKE_ACTION_ID = 2  # Discourse post_action_type id for "like"
+
+# Discourse's UserAction type id for a like GIVEN, used by /user_actions.json's
+# `filter` param. This is a DIFFERENT enum from post_action_type above -- do not
+# reuse LIKE_ACTION_ID here. (filter=2, "was liked", returns 404 on this forum.)
+USER_ACTION_LIKE_GIVEN = 1
+USER_ACTIONS_PAGE_SIZE = 30  # server-side page size for /user_actions.json
+LIKES_FLUSH_EVERY_USERS = 50  # write partial like-graph progress this often
 
 
 def _int(value) -> int:
@@ -68,6 +82,23 @@ def _dt(value) -> datetime:
         return EPOCH
 
 
+def _dt_or_null(value) -> Optional[datetime]:
+    """Like _dt, but keeps a missing timestamp missing.
+
+    _dt folds both absent and unparseable into EPOCH, which is what the
+    non-nullable DateTime columns on every other governance table want.
+    forum_polls.close_at is Nullable instead: most polls never set a close date,
+    and an epoch there is a real value that compares as long past -- it would
+    drag min(close_at) back to 1970 and read as "closed" to anyone filtering on
+    the timestamp. NULL keeps absent absent. See the header comment on
+    create_forum_polls_table.sql for why status, not close_at, decides openness.
+    """
+    if not value:
+        return None
+    parsed = _dt(value)
+    return None if parsed == EPOCH else parsed
+
+
 def _chunks(items: List, size: int):
     for i in range(0, len(items), size):
         yield items[i : i + size]
@@ -86,6 +117,8 @@ class ForumIngestor(BaseIngestor):
         create_topics_sql: str,
         create_posts_sql: str,
         create_users_sql: str,
+        create_likes_sql: str = "",
+        create_polls_sql: str = "",
         mode: str = "daily",
         max_pages: int = 400,
         user_agent: str = "gnosis-analytics-click-runner/1.0",
@@ -97,6 +130,12 @@ class ForumIngestor(BaseIngestor):
         self.create_topics_sql = create_topics_sql
         self.create_posts_sql = create_posts_sql
         self.create_users_sql = create_users_sql
+        # Optional so an older caller that does not pass it keeps working; the
+        # like-graph step is skipped (with a warning) when it is empty.
+        self.create_likes_sql = create_likes_sql
+        # Same contract for polls: unset means the polls table is neither created
+        # nor written, and the open-poll refresh below is skipped.
+        self.create_polls_sql = create_polls_sql
         self.mode = mode
         self.max_pages = max_pages
 
@@ -104,6 +143,8 @@ class ForumIngestor(BaseIngestor):
         self.topics_table = f"{database}.forum_topics"
         self.posts_table = f"{database}.forum_posts"
         self.users_table = f"{database}.forum_users"
+        self.likes_table = f"{database}.forum_likes"
+        self.polls_table = f"{database}.forum_polls"
 
         self.headers = {"User-Agent": user_agent, "Accept": "application/json"}
         # Discourse anonymous limiting is ~60 req/min; 2 req/s stays under it.
@@ -181,7 +222,15 @@ class ForumIngestor(BaseIngestor):
         self._ingest_categories()
 
         # 2) Users (best-effort, bulk via directory_items) ------------------
-        self._ingest_users()
+        # Capture the PREVIOUS likes_given per user before the new snapshot
+        # overwrites it -- daily mode targets users whose count actually grew.
+        prior_likes = self._prior_like_totals()
+        # Returns (username, likes_given) so the like-graph step below knows who
+        # to crawl and how many pages to expect, without re-walking the directory.
+        users = self._ingest_users()
+
+        # 2b) Like graph (best-effort) ---------------------------------------
+        self._ingest_likes(users, prior_likes)
 
         # 3) Topics + posts ---------------------------------------------------
         watermark = self._topic_watermark() if self.mode == "daily" else None
@@ -191,6 +240,8 @@ class ForumIngestor(BaseIngestor):
         if topics is None:
             logger.error("Failed to enumerate topics; aborting.")
             return False
+        if watermark:
+            topics = self._with_open_poll_topics(topics)
         logger.info(f"Ingesting {len(topics)} topics")
 
         total_posts = 0
@@ -211,6 +262,8 @@ class ForumIngestor(BaseIngestor):
                 self.create_topics_sql,
                 self.create_posts_sql,
                 self.create_users_sql,
+                *( (self.create_likes_sql,) if self.create_likes_sql else () ),
+                *( (self.create_polls_sql,) if self.create_polls_sql else () ),
             ):
                 sql = self.load_sql_file(path)
                 with obs.time_operation(obs.get_job_name(), "forum", "create_table"):
@@ -259,10 +312,16 @@ class ForumIngestor(BaseIngestor):
     # ------------------------------------------------------------------ #
     # Users (bulk directory)
     # ------------------------------------------------------------------ #
-    def _ingest_users(self) -> None:
+    def _ingest_users(self) -> List[Tuple[str, int]]:
+        """Ingest the public user directory.
+
+        Returns (username, likes_given) for every user seen, so the like-graph
+        step can drive its crawl off the same pages instead of re-walking them.
+        """
         columns = ["id", "username", "name", "trust_level", "likes_received",
                    "likes_given", "post_count", "topic_count", "days_visited", "raw_json"]
         rows = []
+        seen: List[Tuple[str, int]] = []
         page = 0
         while page <= self.max_pages:
             data = self._get(
@@ -275,12 +334,16 @@ class ForumIngestor(BaseIngestor):
                 break
             for item in items:
                 rows.append(self._user_row(item))
+                username = ((item.get("user") or {}).get("username")) or ""
+                if username:
+                    seen.append((username, _int(item.get("likes_given"))))
             page += 1
         if rows:
             self._batch_insert(self.users_table, rows, columns)
             logger.info(f"Inserted {len(rows)} users")
         else:
             logger.warning("No users fetched from directory_items (non-fatal).")
+        return seen
 
     def _user_row(self, item: Dict) -> List:
         user = item.get("user") or {}
@@ -357,6 +420,41 @@ class ForumIngestor(BaseIngestor):
 
         return list(selected.values())
 
+    def _with_open_poll_topics(self, topics: List[Dict]) -> List[Dict]:
+        """Add topics whose polls are still open, watermark or not.
+
+        Casting a poll vote does not bump the topic, so an open poll on a quiet
+        thread never re-enters the daily crawl and its counts freeze at the last
+        reply. Measured on this forum: 99 topics hold 106 open polls, and 97 of
+        those topics had gone more than seven days without a bump (83 more than a
+        year), so the watermark alone would essentially never revisit them.
+        Closed polls are final and deliberately excluded, so this set shrinks as
+        polls close rather than growing with the forum — ~99 extra topic fetches,
+        under a minute at 2 req/s.
+
+        The stub carries only `id`: /t/{id}.json omits bumped_at, so _topic_row
+        falls back to last_posted_at for these, which is what an unbumped topic's
+        bumped_at already is. It therefore cannot advance the watermark past real
+        activity.
+        """
+        if not self.create_polls_sql:
+            return topics
+        try:
+            result = self.client.query(
+                f"SELECT DISTINCT topic_id FROM {self.polls_table} FINAL "
+                "WHERE status = 'open' AND topic_id > 0"
+            )
+            open_poll_ids = {_int(row[0]) for row in result.result_rows}
+        except Exception as e:
+            logger.warning(f"Could not read open-poll topics: {e}. Skipping refresh.")
+            return topics
+
+        extra = sorted(open_poll_ids - {t.get("id") for t in topics})
+        if extra:
+            logger.info(f"Refreshing {len(extra)} topic(s) with open polls")
+            topics = topics + [{"id": tid} for tid in extra]
+        return topics
+
     def _ingest_topic(self, topic_stub: Dict) -> int:
         tid = topic_stub.get("id")
         if tid is None:
@@ -398,7 +496,29 @@ class ForumIngestor(BaseIngestor):
                  "created_at", "updated_at", "reply_to_post_number", "reply_count",
                  "reads", "like_count", "raw", "cooked", "raw_json"],
             )
+            self._ingest_polls(tid, posts)
         return len(posts)
+
+    def _ingest_polls(self, topic_id, posts: List[Dict]) -> None:
+        """Normalise any polls carried by these posts into forum_polls.
+
+        Polls are embedded in the post payload we already have, so this adds no
+        HTTP request. Only ~180 of 886 topics carry one, hence the cheap exit.
+        """
+        if not self.create_polls_sql:
+            return
+        rows = []
+        for post in posts:
+            rows.extend(self._poll_rows(topic_id, post))
+        if not rows:
+            return
+        self._batch_insert(
+            self.polls_table,
+            rows,
+            ["post_id", "topic_id", "poll_id", "poll_name", "poll_type", "status",
+             "results_visibility", "is_public", "close_at", "voters", "option_id",
+             "option_html", "option_votes", "raw_json"],
+        )
 
     def _topic_row(self, data: Dict, topic_stub: Optional[Dict] = None) -> List:
         # Store topic metadata without the (large) embedded post_stream.
@@ -453,9 +573,204 @@ class ForumIngestor(BaseIngestor):
             json.dumps(post),
         ]
 
+    def _poll_rows(self, topic_id, post: Dict) -> List[List]:
+        """Fan a post's polls out to one row per (poll, option).
+
+        A post may host several named polls ("poll", "poll2"), so poll_name is
+        carried on every row. `raw_json` keeps the poll header only: `options` is
+        already normalised into these rows, and `preloaded_voters` (public polls
+        only) is a 25-per-option truncated sample that stays available in
+        forum_posts.raw_json rather than being duplicated once per option here.
+        """
+        rows = []
+        for poll in post.get("polls") or []:
+            options = poll.get("options") or []
+            if not options:
+                continue
+            header = {k: v for k, v in poll.items()
+                      if k not in ("options", "preloaded_voters")}
+            for option in options:
+                option_id = option.get("id")
+                if not option_id:
+                    continue
+                votes = option.get("votes")
+                rows.append([
+                    _int(post.get("id")),
+                    _int(post.get("topic_id")) if post.get("topic_id") else _int(topic_id),
+                    _int(poll.get("id")),
+                    poll.get("name") or "poll",
+                    poll.get("type") or "",
+                    poll.get("status") or "",
+                    poll.get("results") or "",
+                    1 if poll.get("public") else 0,
+                    _dt_or_null(poll.get("close")),
+                    _int(poll.get("voters")),
+                    str(option_id),
+                    option.get("html") or "",
+                    # Absent while the results policy hides counts. -1, not 0, so
+                    # withheld stays distinguishable from a genuine zero.
+                    _int(votes) if votes is not None else -1,
+                    json.dumps(header),
+                ])
+        return rows
+
     # ------------------------------------------------------------------ #
     # Helpers
     # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------ #
+    # Like graph
+    # ------------------------------------------------------------------ #
+    def _stored_like_counts(self) -> Dict[str, int]:
+        """Like edges already held, per acting username.
+
+        Used only to decide who to re-crawl in daily mode. A user who has UNliked
+        something will read as stored >= directory and be skipped -- acceptable,
+        since unlikes are not representable in the table anyway.
+        """
+        try:
+            result = self.client.query(
+                f"SELECT acting_username, count() FROM {self.likes_table} FINAL "
+                f"GROUP BY acting_username"
+            )
+            return {str(row[0]): int(row[1]) for row in result.result_rows}
+        except Exception as e:
+            logger.warning(f"Could not read stored like counts ({e}); treating as empty.")
+            return {}
+
+    def _prior_like_totals(self) -> Dict[str, int]:
+        """likes_given per username as of the PREVIOUS run's user snapshot.
+
+        Read before _ingest_users() overwrites it. Empty on a fresh database, which
+        correctly makes every user a target (i.e. a full backfill).
+        """
+        try:
+            result = self.client.query(
+                f"SELECT username, likes_given FROM {self.users_table} FINAL"
+            )
+            return {str(row[0]): int(row[1]) for row in result.result_rows}
+        except Exception as e:
+            logger.warning(f"Could not read prior like totals ({e}); treating as empty.")
+            return {}
+
+    def _ingest_likes(self, users: List[Tuple[str, int]],
+                      prior_likes: Optional[Dict[str, int]] = None) -> None:
+        """Crawl the per-like edges for the users worth crawling.
+
+        backfill: every user whose likes_given exceeds the edges we already hold, so an
+        interrupted backfill resumes rather than restarting.
+        daily: only users whose likes_given GREW since the previous run.
+
+        Daily deliberately keys off growth rather than off "do we hold all their edges".
+        /user_actions.json 404s for a large subset of users whose /u/{username}.json is a
+        healthy 200 -- 673 of 1169 on this forum. Those users can never be completed, so a
+        "crawl anyone incomplete" rule re-fetches all 673 every single day forever, roughly
+        5.6 minutes of requests returning nothing. Growth-based targeting reduces that to
+        the handful who actually gained a like.
+        """
+        if not self.create_likes_sql:
+            logger.warning("No forum_likes DDL configured; skipping like graph.")
+            return
+        if not users:
+            logger.warning("No users known; skipping like graph.")
+            return
+
+        columns = ["post_id", "topic_id", "post_number", "acting_user_id",
+                   "acting_username", "created_at", "hidden", "deleted", "raw_json"]
+
+        with_likes = [(u, g) for u, g in users if g > 0]
+        if self.mode == "backfill":
+            baseline = self._stored_like_counts()
+            reason = "not yet stored"
+        else:
+            baseline = prior_likes or {}
+            reason = "gained likes since last run"
+        targets = [(u, g) for u, g in with_likes if g > baseline.get(u, 0)]
+        logger.info(
+            f"Like graph ({self.mode}): {len(targets)} users to crawl ({reason}), "
+            f"{len(with_likes) - len(targets)} skipped"
+        )
+
+        # Flush per chunk of users rather than accumulating the whole crawl. A full
+        # backfill is several hundred HTTP requests over several minutes; buffering
+        # it all would mean a mid-run failure discards every edge fetched so far,
+        # and a re-run starts from zero. Flushing keeps progress durable (the table
+        # is ReplacingMergeTree, so a partial run is safely re-runnable) and caps
+        # memory regardless of forum size.
+        rows: List[List] = []
+        total = 0
+        expected_total = 0
+        users_empty = 0
+        for idx, (username, given) in enumerate(targets, start=1):
+            fetched = self._fetch_user_likes(username, given)
+            expected_total += given
+            if not fetched:
+                # The directory says this user gave likes but their action feed
+                # returned nothing -- /user_actions.json 404s for a subset of users
+                # whose /u/{username}.json is a healthy 200, so this is a real and
+                # not-yet-explained coverage gap, not an error on our side.
+                users_empty += 1
+            rows.extend(fetched)
+            if idx % LIKES_FLUSH_EVERY_USERS == 0 or idx == len(targets):
+                if rows:
+                    self._batch_insert(self.likes_table, rows, columns)
+                    total += len(rows)
+                    rows = []
+                logger.info(f"  like graph: {idx}/{len(targets)} users, {total} edges inserted")
+
+        # Report the capture rate every run. A crawl that silently returns 70% of the
+        # like graph looks identical to one that returns 100%, and every phase-resolved
+        # like metric downstream inherits the shortfall -- so it gets measured, not
+        # assumed. Do not remove this in favour of a bare success log.
+        if expected_total:
+            logger.info(
+                f"Like graph capture: {total}/{expected_total} edges "
+                f"({100.0 * total / expected_total:.1f}% of directory likes_given); "
+                f"{users_empty}/{len(targets)} users returned nothing"
+            )
+        if total:
+            logger.info(f"Inserted {total} like edges")
+        else:
+            logger.info("Like graph: nothing new to insert.")
+
+    def _fetch_user_likes(self, username: str, expected: int) -> List[List]:
+        """Page one user's GIVEN likes out of /user_actions.json."""
+        out: List[List] = []
+        offset = 0
+        # Slack of 3 pages over the directory's own count, which can lag reality.
+        for _ in range((expected // USER_ACTIONS_PAGE_SIZE) + 3):
+            data = self._get(
+                "/user_actions.json",
+                {"username": username, "filter": USER_ACTION_LIKE_GIVEN, "offset": offset},
+            )
+            if data is None:
+                break
+            actions = data.get("user_actions") or []
+            if not actions:
+                break
+            for action in actions:
+                post_id = _int(action.get("post_id"))
+                if not post_id:
+                    # Non-post actions cannot be keyed; skip rather than store a 0 id.
+                    continue
+                out.append([
+                    post_id,
+                    _int(action.get("topic_id")),
+                    _int(action.get("post_number")),
+                    _int(action.get("acting_user_id")),
+                    # The QUERIED username is authoritative for "who liked this".
+                    # The payload's target_* fields echo the acting user rather than
+                    # the post author, so they are deliberately not stored.
+                    username,
+                    _dt(action.get("created_at")),
+                    1 if action.get("hidden") else 0,
+                    1 if action.get("deleted") else 0,
+                    json.dumps(action),
+                ])
+            if len(actions) < USER_ACTIONS_PAGE_SIZE:
+                break
+            offset += len(actions)
+        return out
+
     def _batch_insert(self, table: str, rows: List[List], columns: List[str]) -> None:
         for i in range(0, len(rows), INSERT_BATCH_SIZE):
             batch = rows[i : i + INSERT_BATCH_SIZE]
@@ -464,7 +779,8 @@ class ForumIngestor(BaseIngestor):
             obs.observe_rows("forum", table, len(batch))
 
     def _log_counts(self) -> None:
-        for table in (self.categories_table, self.topics_table, self.posts_table, self.users_table):
+        for table in (self.categories_table, self.topics_table, self.posts_table,
+                      self.users_table, self.likes_table, self.polls_table):
             try:
                 logger.info(f"{table}: {self.get_row_count(table)} rows (pre-merge)")
             except Exception:
