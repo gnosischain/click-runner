@@ -35,6 +35,24 @@
 -- wins the version comparison -- but it means a freshness alarm built on max(ingested_at)
 -- will fire falsely on a healthy quiet poll. Use the ingestor's own run status for liveness.
 --
+-- close_at is a SCHEDULE, not an observation, and status is the only open/closed signal.
+-- Discourse never reconciles the scheduled time with reality: a poll sits at status = 'open'
+-- indefinitely past its own close_at unless something actually closes it. Measured across 106
+-- open polls, 72 carry a close_at that has ALREADY LAPSED and the other 34 set none at all --
+-- and no poll in the table, open or closed, has a close_at in the future. So the obvious
+-- predicate "close_at < now() means closed" is wrong for every open poll simultaneously; it
+-- reports 189 of 189 closed with an empty open set, silently and with a plausible-looking
+-- total. That matters because the open set is what drives the ingestor's own refresh
+-- (_with_open_poll_topics selects WHERE status = 'open'). Read close_at only as "when the
+-- author intended to close it", and never as evidence that they did.
+--
+-- This is the one Nullable column in the governance schema, and deliberately so. Every other
+-- timestamp here runs through _dt(), which folds missing and unparseable into the epoch; a
+-- poll that never set a close date is the common case, not the edge case, so an epoch would
+-- both drag min(close_at) back to 1970 and read as long-closed. close_at uses _dt_or_null()
+-- instead. Note this does NOT rescue the predicate above -- NULL covers only 34 of the 106
+-- open polls, the other 72 have real lapsed dates -- so it buys honest aggregates, not safety.
+--
 -- option_votes = -1 means WITHHELD, never zero. Discourse omits per-option counts while a
 -- poll's results policy hides them (results = on_vote / on_close / staff_only); 0 is a
 -- real zero. Staging must map -1 to NULL rather than treating it as no votes. The withheld
@@ -49,7 +67,7 @@ CREATE TABLE IF NOT EXISTS {{GOVERNANCE_DATABASE}}.forum_polls (
     status             LowCardinality(String),
     results_visibility LowCardinality(String),
     is_public          UInt8,
-    close_at           DateTime,
+    close_at           Nullable(DateTime),
     voters             UInt32,
     option_id          String,
     option_html        String,

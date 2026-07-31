@@ -82,6 +82,23 @@ def _dt(value) -> datetime:
         return EPOCH
 
 
+def _dt_or_null(value) -> Optional[datetime]:
+    """Like _dt, but keeps a missing timestamp missing.
+
+    _dt folds both absent and unparseable into EPOCH, which is what the
+    non-nullable DateTime columns on every other governance table want.
+    forum_polls.close_at is Nullable instead: most polls never set a close date,
+    and an epoch there is a real value that compares as long past -- it would
+    drag min(close_at) back to 1970 and read as "closed" to anyone filtering on
+    the timestamp. NULL keeps absent absent. See the header comment on
+    create_forum_polls_table.sql for why status, not close_at, decides openness.
+    """
+    if not value:
+        return None
+    parsed = _dt(value)
+    return None if parsed == EPOCH else parsed
+
+
 def _chunks(items: List, size: int):
     for i in range(0, len(items), size):
         yield items[i : i + size]
@@ -586,7 +603,7 @@ class ForumIngestor(BaseIngestor):
                     poll.get("status") or "",
                     poll.get("results") or "",
                     1 if poll.get("public") else 0,
-                    _dt(poll.get("close")),
+                    _dt_or_null(poll.get("close")),
                     _int(poll.get("voters")),
                     str(option_id),
                     option.get("html") or "",
