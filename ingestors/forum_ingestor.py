@@ -2,7 +2,7 @@
 Gnosis Forum (Discourse) ingestor.
 
 Discourse serves structured JSON at the `.json` variant of every public route,
-no auth required, so we never scrape HTML. Four tables:
+no auth required, so we never scrape HTML. Six tables:
 
     <db>.forum_categories  category tree
     <db>.forum_topics      one row per topic (discussion thread)
@@ -10,6 +10,11 @@ no auth required, so we never scrape HTML. Four tables:
                            both the raw markdown (via include_raw=1) and the
                            cooked HTML rendering
     <db>.forum_users       public user directory (activity + like counts)
+    <db>.forum_likes       one row per like edge (liker → post), with the real
+                           timestamp of the like, from /user_actions.json
+    <db>.forum_polls       one row per (post, poll, option) with its vote count —
+                           the GIP temperature checks, normalised out of the post
+                           payload we already fetch
 
 Each row keeps the full API object in `raw_json` plus typed key columns, exactly
 like the Snapshot ingestor. Tables are ReplacingMergeTree(ingested_at) keyed by
@@ -21,7 +26,9 @@ Modes:
   daily     only (re)fetch topics whose bumped_at advanced past the max
             bumped_at already stored — this picks up new topics, new replies,
             and edits that bumped the thread. (Silent edits that do not bump a
-            topic are not re-captured; acceptable for v1.)
+            topic are not re-captured; acceptable for v1.) Topics with an OPEN
+            poll are the documented exception and are always refreshed, because
+            poll votes do not bump a topic and the counts would otherwise freeze.
 """
 
 import json
@@ -94,6 +101,7 @@ class ForumIngestor(BaseIngestor):
         create_posts_sql: str,
         create_users_sql: str,
         create_likes_sql: str = "",
+        create_polls_sql: str = "",
         mode: str = "daily",
         max_pages: int = 400,
         user_agent: str = "gnosis-analytics-click-runner/1.0",
@@ -108,6 +116,9 @@ class ForumIngestor(BaseIngestor):
         # Optional so an older caller that does not pass it keeps working; the
         # like-graph step is skipped (with a warning) when it is empty.
         self.create_likes_sql = create_likes_sql
+        # Same contract for polls: unset means the polls table is neither created
+        # nor written, and the open-poll refresh below is skipped.
+        self.create_polls_sql = create_polls_sql
         self.mode = mode
         self.max_pages = max_pages
 
@@ -116,6 +127,7 @@ class ForumIngestor(BaseIngestor):
         self.posts_table = f"{database}.forum_posts"
         self.users_table = f"{database}.forum_users"
         self.likes_table = f"{database}.forum_likes"
+        self.polls_table = f"{database}.forum_polls"
 
         self.headers = {"User-Agent": user_agent, "Accept": "application/json"}
         # Discourse anonymous limiting is ~60 req/min; 2 req/s stays under it.
@@ -211,6 +223,8 @@ class ForumIngestor(BaseIngestor):
         if topics is None:
             logger.error("Failed to enumerate topics; aborting.")
             return False
+        if watermark:
+            topics = self._with_open_poll_topics(topics)
         logger.info(f"Ingesting {len(topics)} topics")
 
         total_posts = 0
@@ -232,6 +246,7 @@ class ForumIngestor(BaseIngestor):
                 self.create_posts_sql,
                 self.create_users_sql,
                 *( (self.create_likes_sql,) if self.create_likes_sql else () ),
+                *( (self.create_polls_sql,) if self.create_polls_sql else () ),
             ):
                 sql = self.load_sql_file(path)
                 with obs.time_operation(obs.get_job_name(), "forum", "create_table"):
@@ -388,6 +403,41 @@ class ForumIngestor(BaseIngestor):
 
         return list(selected.values())
 
+    def _with_open_poll_topics(self, topics: List[Dict]) -> List[Dict]:
+        """Add topics whose polls are still open, watermark or not.
+
+        Casting a poll vote does not bump the topic, so an open poll on a quiet
+        thread never re-enters the daily crawl and its counts freeze at the last
+        reply. Measured on this forum: 99 topics hold 106 open polls, and 97 of
+        those topics had gone more than seven days without a bump (83 more than a
+        year), so the watermark alone would essentially never revisit them.
+        Closed polls are final and deliberately excluded, so this set shrinks as
+        polls close rather than growing with the forum — ~99 extra topic fetches,
+        under a minute at 2 req/s.
+
+        The stub carries only `id`: /t/{id}.json omits bumped_at, so _topic_row
+        falls back to last_posted_at for these, which is what an unbumped topic's
+        bumped_at already is. It therefore cannot advance the watermark past real
+        activity.
+        """
+        if not self.create_polls_sql:
+            return topics
+        try:
+            result = self.client.query(
+                f"SELECT DISTINCT topic_id FROM {self.polls_table} FINAL "
+                "WHERE status = 'open' AND topic_id > 0"
+            )
+            open_poll_ids = {_int(row[0]) for row in result.result_rows}
+        except Exception as e:
+            logger.warning(f"Could not read open-poll topics: {e}. Skipping refresh.")
+            return topics
+
+        extra = sorted(open_poll_ids - {t.get("id") for t in topics})
+        if extra:
+            logger.info(f"Refreshing {len(extra)} topic(s) with open polls")
+            topics = topics + [{"id": tid} for tid in extra]
+        return topics
+
     def _ingest_topic(self, topic_stub: Dict) -> int:
         tid = topic_stub.get("id")
         if tid is None:
@@ -429,7 +479,29 @@ class ForumIngestor(BaseIngestor):
                  "created_at", "updated_at", "reply_to_post_number", "reply_count",
                  "reads", "like_count", "raw", "cooked", "raw_json"],
             )
+            self._ingest_polls(tid, posts)
         return len(posts)
+
+    def _ingest_polls(self, topic_id, posts: List[Dict]) -> None:
+        """Normalise any polls carried by these posts into forum_polls.
+
+        Polls are embedded in the post payload we already have, so this adds no
+        HTTP request. Only ~180 of 886 topics carry one, hence the cheap exit.
+        """
+        if not self.create_polls_sql:
+            return
+        rows = []
+        for post in posts:
+            rows.extend(self._poll_rows(topic_id, post))
+        if not rows:
+            return
+        self._batch_insert(
+            self.polls_table,
+            rows,
+            ["post_id", "topic_id", "poll_id", "poll_name", "poll_type", "status",
+             "results_visibility", "is_public", "close_at", "voters", "option_id",
+             "option_html", "option_votes", "raw_json"],
+        )
 
     def _topic_row(self, data: Dict, topic_stub: Optional[Dict] = None) -> List:
         # Store topic metadata without the (large) embedded post_stream.
@@ -483,6 +555,47 @@ class ForumIngestor(BaseIngestor):
             post.get("cooked") or "",
             json.dumps(post),
         ]
+
+    def _poll_rows(self, topic_id, post: Dict) -> List[List]:
+        """Fan a post's polls out to one row per (poll, option).
+
+        A post may host several named polls ("poll", "poll2"), so poll_name is
+        carried on every row. `raw_json` keeps the poll header only: `options` is
+        already normalised into these rows, and `preloaded_voters` (public polls
+        only) is a 25-per-option truncated sample that stays available in
+        forum_posts.raw_json rather than being duplicated once per option here.
+        """
+        rows = []
+        for poll in post.get("polls") or []:
+            options = poll.get("options") or []
+            if not options:
+                continue
+            header = {k: v for k, v in poll.items()
+                      if k not in ("options", "preloaded_voters")}
+            for option in options:
+                option_id = option.get("id")
+                if not option_id:
+                    continue
+                votes = option.get("votes")
+                rows.append([
+                    _int(post.get("id")),
+                    _int(post.get("topic_id")) if post.get("topic_id") else _int(topic_id),
+                    _int(poll.get("id")),
+                    poll.get("name") or "poll",
+                    poll.get("type") or "",
+                    poll.get("status") or "",
+                    poll.get("results") or "",
+                    1 if poll.get("public") else 0,
+                    _dt(poll.get("close")),
+                    _int(poll.get("voters")),
+                    str(option_id),
+                    option.get("html") or "",
+                    # Absent while the results policy hides counts. -1, not 0, so
+                    # withheld stays distinguishable from a genuine zero.
+                    _int(votes) if votes is not None else -1,
+                    json.dumps(header),
+                ])
+        return rows
 
     # ------------------------------------------------------------------ #
     # Helpers
@@ -650,7 +763,7 @@ class ForumIngestor(BaseIngestor):
 
     def _log_counts(self) -> None:
         for table in (self.categories_table, self.topics_table, self.posts_table,
-                      self.users_table, self.likes_table):
+                      self.users_table, self.likes_table, self.polls_table):
             try:
                 logger.info(f"{table}: {self.get_row_count(table)} rows (pre-merge)")
             except Exception:
