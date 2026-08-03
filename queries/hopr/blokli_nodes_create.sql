@@ -1,8 +1,8 @@
 -- Per-node identity snapshot from Blokli. `multiaddress` is the node's announced
 -- transport address and carries a raw IP, which is the input for geo/ASN
--- enrichment (see crawlers_data.ipinfo). chain_key joins to the source/destination
+-- enrichment (see {{HOPR_DATABASE}}.ipinfo). chain_key joins to the source/destination
 -- addresses in the decoded HoprChannels events.
-CREATE TABLE IF NOT EXISTS crawlers_data.hopr_blokli_nodes
+CREATE TABLE IF NOT EXISTS {{HOPR_DATABASE}}.hopr_blokli_nodes
 (
     snapshot_date       Date,
     network             LowCardinality(String),

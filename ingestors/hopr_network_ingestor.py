@@ -125,6 +125,23 @@ class HoprNetworkIngestor(BaseIngestor):
         return payload if isinstance(payload, list) else []
 
     @staticmethod
+    def _num(value: Any) -> Optional[float]:
+        """Coerce a numeric API field to float, or None.
+
+        The prober mixes types within the same field: `latency` comes back as int
+        for most nodes, float for a few (averaged RTT, e.g. 33.5) and null for the
+        ~76 it cannot reach; availability fields mix int 1 with floats. Passing
+        that mixture straight to clickhouse_connect raises
+        "required argument is not an integer" / DataError, so normalize here.
+        """
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
     def _ms_to_dt(value: Any) -> Optional[datetime]:
         if not value:
             return None
@@ -184,12 +201,12 @@ class HoprNetworkIngestor(BaseIngestor):
                 "snapshot_date": snapshot_date,
                 "network_id": env,
                 "node_address": addr,
-                "latency_ms": n.get("latency"),
-                "availability_24h": n.get("availability24h"),
-                "availability_7d": n.get("availability7d"),
-                "availability_30d": n.get("availability30d"),
-                "availability_6m": n.get("availability6m"),
-                "availability_1y": n.get("availability1y"),
+                "latency_ms": self._num(n.get("latency")),
+                "availability_24h": self._num(n.get("availability24h")),
+                "availability_7d": self._num(n.get("availability7d")),
+                "availability_30d": self._num(n.get("availability30d")),
+                "availability_6m": self._num(n.get("availability6m")),
+                "availability_1y": self._num(n.get("availability1y")),
                 "first_seen": self._ms_to_dt(n.get("firstseen")),
                 "last_seen": self._ms_to_dt(n.get("lastseen")),
                 "prober_last_run": last_run,

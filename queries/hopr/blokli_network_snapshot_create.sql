@@ -1,6 +1,6 @@
 -- Daily HOPR network snapshot from Blokli (HOPR's own v4 indexer).
 -- ReplacingMergeTree(ingested_at): re-running a day supersedes that day's row.
-CREATE TABLE IF NOT EXISTS crawlers_data.hopr_blokli_network_snapshot
+CREATE TABLE IF NOT EXISTS {{HOPR_DATABASE}}.hopr_blokli_network_snapshot
 (
     snapshot_date                          Date,
     network                                LowCardinality(String),

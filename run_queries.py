@@ -639,6 +639,9 @@ def run_hopr_blokli_ingestor(args, client, query_variables):
     """Snapshot HOPR v4 network + node state from Blokli's public GraphQL API."""
     networks = [n.strip() for n in args.hopr_blokli_networks.split(",") if n.strip()]
     db = args.hopr_database
+    # SQL templates use {{HOPR_DATABASE}} so the DDL and the insert target
+    # can never drift apart.
+    query_variables = {**query_variables, "HOPR_DATABASE": db}
     network_table = f"{db}.hopr_blokli_network_snapshot"
     nodes_table = f"{db}.hopr_blokli_nodes"
     ingestor = HoprBlokliIngestor(
@@ -657,6 +660,9 @@ def run_hopr_network_ingestor(args, client, query_variables):
     """Snapshot dufour node availability/latency from HOPR's network dashboard."""
     ids = [int(x.strip()) for x in args.hopr_network_ids.split(",") if x.strip()]
     db = args.hopr_database
+    # SQL templates use {{HOPR_DATABASE}} so the DDL and the insert target
+    # can never drift apart.
+    query_variables = {**query_variables, "HOPR_DATABASE": db}
     nodes_table = f"{db}.hopr_network_nodes"
     online_table = f"{db}.hopr_network_online_hourly"
     ingestor = HoprNetworkIngestor(
