@@ -206,7 +206,9 @@ def create_argparser() -> argparse.ArgumentParser:
                              "jura is absent from that dashboard by design.")
     parser.add_argument("--hopr-network-mode", choices=["daily", "backfill"],
                         default=os.getenv("HOPR_NETWORK_MODE", "daily"),
-                        help="backfill also pulls the full hourly online-node history")
+                        help="Accepted for compatibility; both modes now do the same "
+                             "thing. The full hourly online-node history is pulled on "
+                             "every run, because it only ever advances when re-fetched.")
     parser.add_argument("--hopr-database",
                         default=os.getenv("HOPR_DATABASE", "crawlers_data"),
                         help="Target database for HOPR tables (default: crawlers_data)")

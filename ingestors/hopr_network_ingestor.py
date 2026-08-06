@@ -79,6 +79,12 @@ class HoprNetworkIngestor(BaseIngestor):
         online_create_sql: str = "queries/hopr/network_online_hourly_create.sql",
     ):
         super().__init__(client, variables)
+        # `mode` is still accepted so existing invocations and any deployed schedule
+        # keep working, but the two modes now do the SAME thing: both snapshot the
+        # roster and both re-fetch the full hourly series. The distinction used to be
+        # that only backfill fetched the hourly series, which silently froze it under
+        # the daily schedule. Nothing else differed, so there is no longer a wrong
+        # mode to deploy with -- which is the point.
         if mode not in ("daily", "backfill"):
             raise ValueError(f"Invalid mode: {mode} (expected daily|backfill)")
         self.network_ids = list(network_ids)
@@ -215,7 +221,12 @@ class HoprNetworkIngestor(BaseIngestor):
         return rows
 
     def _fetch_online_hourly(self, env: int, ingested_at: datetime) -> Optional[List[Dict]]:
-        """Hourly online-node count. History starts 2023-09-02; backfill once."""
+        """Hourly online-node count; the whole series, every call.
+
+        History starts 2023-09-02. Called on every run, not just backfills -- see the
+        comment at the call site. "Returns everything each time" is why it needs no
+        incremental logic, not a reason to run it once.
+        """
         payload = self._get(f"/api/statistics/getHistoricalOnlineByHour?env={env}")
         if not isinstance(payload, list):
             logger.error(
@@ -299,10 +310,26 @@ class HoprNetworkIngestor(BaseIngestor):
             elif not self._insert(self.nodes_table, rows, node_cols):
                 ok = False
 
-            if self.mode == "backfill":
-                hourly = self._fetch_online_hourly(env, ingested_at)
-                if hourly is None:
-                    ok = False
-                elif not self._insert(self.online_table, hourly, online_cols):
-                    ok = False
+            # Fetched in EVERY mode, deliberately -- do not put this back behind
+            # `if self.mode == "backfill"`.
+            #
+            # getHistoricalOnlineByHour returns the whole series on every call. That
+            # means it needs no incremental logic; it does NOT mean it needs no
+            # re-running. New hours accrue continuously, so gating this on backfill
+            # froze the series at whatever the last manual backfill captured, while
+            # the daily job kept succeeding and the roster kept updating around it --
+            # a silent staleness with no failing signal anywhere.
+            #
+            # Re-inserting the full series daily is what the ReplacingMergeTree is
+            # for: ~20k rows collapse to the same grain, which is nothing, and it
+            # makes the table self-healing. That matters because the upstream history
+            # is not gap-free (roughly a fifth of expected hours are missing), and a
+            # full re-fetch is the only thing that can ever backfill a hole. An
+            # "insert only rows newer than max(observed_at)" optimisation would save
+            # trivial write volume and permanently forfeit that repair.
+            hourly = self._fetch_online_hourly(env, ingested_at)
+            if hourly is None:
+                ok = False
+            elif not self._insert(self.online_table, hourly, online_cols):
+                ok = False
         return ok

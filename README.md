@@ -421,6 +421,77 @@ DefiLlama (confidence >= 0.9) > CoinGecko > Dune at priority 3 (below native /
 backedfi). Keep `int_execution_token_prices_compare` for QA. K8s CronJob +
 prod `crawlers_data` writes are still deferred (dev uses `playground_max`).
 
+## HOPR (network dashboard + blokli)
+
+Two ingestors feeding four tables in `{{HOPR_DATABASE}}` (`crawlers_data` in prod).
+Consumed by dbt-cerebro's `stg_crawlers_data__hopr_*` staging views,
+`fct_hopr_network_health_daily` and `int_hopr_nodes`.
+
+| Ingestor | Tables | Coverage |
+|---|---|---|
+| `hopr_network_ingestor.py` | `hopr_network_nodes`, `hopr_network_online_hourly` | **dufour only** — the prober was never ported to jura/v4 |
+| `hopr_blokli_ingestor.py` | `hopr_blokli_nodes`, `hopr_blokli_network_snapshot` | **jura + rotsee only** — blokli does not serve dufour; rotsee is a testnet |
+
+The two feeds are mirror images and neither covers both networks. That is upstream
+reality, not a gap to close.
+
+### Running them
+
+Both are classes invoked through `run_queries.py` — they have no `__main__`, so
+`python -m ingestors.hopr_network_ingestor` imports the module and exits silently
+without ingesting anything.
+
+```bash
+python run_queries.py --ingestor=hopr-network --hopr-database=playground_max
+python run_queries.py --ingestor=hopr-blokli --hopr-blokli-networks=jura,rotsee --hopr-database=playground_max
+```
+
+Drop `--hopr-database` in prod (it defaults to `crawlers_data`). There is no
+docker-compose service for either yet — whoever deploys will add one, or a K8s
+CronJob alongside the other daily ingestors.
+
+### Deploying the schedule
+
+**Run once a day. `--hopr-network-mode` no longer changes what is fetched, so there is
+no wrong mode to pick** — that was deliberate, see below.
+
+All four tables are `ReplacingMergeTree(ingested_at)` and every dbt staging view over
+them reads `FINAL`, so re-runs, catch-ups and overlapping runs are all safe. Running
+more than once a day is harmless; running less loses data permanently.
+
+Two properties that decide the cadence:
+
+- `hopr_network_nodes`, `hopr_blokli_nodes` and `hopr_blokli_network_snapshot` are
+  **forward-only daily snapshots**. They are queried for *today*; there is no
+  historical endpoint. A day the job does not run is a hole that can never be filled.
+  This is the whole argument for deploying the schedule promptly.
+- `hopr_network_online_hourly` is the opposite: the API returns the entire series
+  from 2023-09 on every call, so it **self-heals**. Any run repairs every earlier gap.
+
+That second table used to be fetched only under `--mode backfill`. "Returns everything
+each time" was read as "run it once", but new hours keep accruing, so a daily schedule
+left the series frozen at the last manual backfill while the job kept reporting
+success — silent staleness with nothing failing. It is now fetched on every run
+regardless of mode. Do not re-gate it on `backfill`.
+
+It matters because that series is the only multi-year HOPR history that exists, and it
+is the sole source of "how many nodes are actually online" — as opposed to how many
+ever registered on-chain, which is cumulative, never expires, and currently overstates
+the live network several-fold.
+
+### Also needed: ip_crawler
+
+Node geography comes from `ipinfo`, populated by the separate **ip_crawler** repo via
+`python -m src.crawler --source hopr`. That is a one-shot command with no schedule of
+its own, and it reads `int_hopr_nodes` for the IP list, so it must run *after* dbt.
+
+It needs a recurring run, otherwise newly-announced IPs stay unenriched (visibly —
+`int_hopr_nodes.geo_source` reports `unenriched` rather than pretending). It is cheap
+to repeat: the query pre-filters against `ipinfo`, so a re-run only costs API calls for
+genuinely new IPs.
+
+Order: click-runner → dbt → ip_crawler → dbt (to pick up the new geo).
+
 ## Troubleshooting
 
 ### Common Issues
