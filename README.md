@@ -435,6 +435,21 @@ Consumed by dbt-cerebro's `stg_crawlers_data__hopr_*` staging views,
 The two feeds are mirror images and neither covers both networks. That is upstream
 reality, not a gap to close.
 
+### These tables must exist BEFORE the dbt side merges
+
+The four tables live only in a dev database until an ingestor run creates them in
+`crawlers_data` (both ingestors issue `CREATE TABLE IF NOT EXISTS`, so a single run of
+each is enough — the cron does not have to be deployed yet).
+
+That ordering is not cosmetic. dbt-cerebro's `int_hopr_nodes` reads
+`stg_crawlers_data__hopr_network_nodes` for per-node liveness, and that model **already
+runs in production today**. Merging the dbt HOPR work while these tables are absent does
+not just leave the new models unbuilt — it breaks a live model, because a view over a
+missing table fails to create at all.
+
+So: run the ingestors against prod (or deploy the cron) first, then merge the dbt side.
+Either order of the two ingestors is fine; they share nothing.
+
 ### Running them
 
 Both are classes invoked through `run_queries.py` — they have no `__main__`, so
@@ -446,9 +461,14 @@ python run_queries.py --ingestor=hopr-network --hopr-database=playground_max
 python run_queries.py --ingestor=hopr-blokli --hopr-blokli-networks=jura,rotsee --hopr-database=playground_max
 ```
 
-Drop `--hopr-database` in prod (it defaults to `crawlers_data`). There is no
-docker-compose service for either yet — whoever deploys will add one, or a K8s
-CronJob alongside the other daily ingestors.
+In prod, drop **both** overrides: `--hopr-database` defaults to `crawlers_data`, and
+`--hopr-blokli-networks` defaults to `jura` alone. Adding `rotsee` is a dev convenience
+— it is a testnet whose ticket price and balances are orders of magnitude away from
+production. dbt flags it as `is_testnet` so it cannot be summed in by accident, but
+there is no reason to carry it in prod.
+
+There is no docker-compose service for either ingestor yet — whoever deploys will add
+one, or a K8s CronJob alongside the other daily ingestors.
 
 ### Deploying the schedule
 
