@@ -435,19 +435,19 @@ Consumed by dbt-cerebro's `stg_crawlers_data__hopr_*` staging views,
 The two feeds are mirror images and neither covers both networks. That is upstream
 reality, not a gap to close.
 
-### These tables must exist BEFORE the dbt side merges
+### These tables must exist in crawlers_data before the dbt side runs in prod
 
 The four tables live only in a dev database until an ingestor run creates them in
 `crawlers_data` (both ingestors issue `CREATE TABLE IF NOT EXISTS`, so a single run of
 each is enough — the cron does not have to be deployed yet).
 
-That ordering is not cosmetic. dbt-cerebro's `int_hopr_nodes` reads
-`stg_crawlers_data__hopr_network_nodes` for per-node liveness, and that model **already
-runs in production today**. Merging the dbt HOPR work while these tables are absent does
-not just leave the new models unbuilt — it breaks a live model, because a view over a
-missing table fails to create at all.
+dbt-cerebro's HOPR models read them through `stg_crawlers_data__hopr_*`, and a ClickHouse
+view over a missing table fails to CREATE rather than returning nothing. So if the tables
+are absent the first production dbt run errors on those models instead of building them
+empty. Nothing is live yet — the whole HOPR set is still development-only — but this is
+the thing to clear before it ships.
 
-So: run the ingestors against prod (or deploy the cron) first, then merge the dbt side.
+Run the ingestors against prod (or deploy the cron), then let the dbt side run there.
 Either order of the two ingestors is fine; they share nothing.
 
 ### Running them
