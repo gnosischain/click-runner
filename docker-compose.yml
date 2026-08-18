@@ -895,3 +895,49 @@ services:
       --external-prices-mode=backfill
       --external-prices-database=${EXTERNAL_PRICES_DATABASE:-crawlers_data}
       --external-prices-tokens-config=config/external_prices_tokens.yml
+
+  hopr-blokli-ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: hopr-blokli-ingestor
+    volumes:
+      - ./queries:/app/queries
+    environment:
+      CH_HOST: ${CH_DB_HOST}
+      CH_PORT: ${CH_NATIVE_PORT}
+      CH_USER: ${CH_USER}
+      CH_PASSWORD: ${CH_PASSWORD}
+      CH_DB: ${CH_DB}
+      CH_SECURE: ${CH_SECURE}
+      CH_VERIFY: "False"
+      HOPR_BLOKLI_NETWORKS: ${HOPR_BLOKLI_NETWORKS:-jura}
+      HOPR_DATABASE: ${HOPR_DATABASE:-crawlers_data}
+    command: >
+      --ingestor=hopr-blokli
+      --hopr-blokli-networks=${HOPR_BLOKLI_NETWORKS:-jura}
+      --hopr-database=${HOPR_DATABASE:-crawlers_data}
+
+  hopr-network-ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: hopr-network-ingestor
+    volumes:
+      - ./queries:/app/queries
+    environment:
+      CH_HOST: ${CH_DB_HOST}
+      CH_PORT: ${CH_NATIVE_PORT}
+      CH_USER: ${CH_USER}
+      CH_PASSWORD: ${CH_PASSWORD}
+      CH_DB: ${CH_DB}
+      CH_SECURE: ${CH_SECURE}
+      CH_VERIFY: "False"
+      HOPR_NETWORK_IDS: ${HOPR_NETWORK_IDS:-3}
+      HOPR_NETWORK_MODE: ${HOPR_NETWORK_MODE:-daily}
+      HOPR_DATABASE: ${HOPR_DATABASE:-crawlers_data}
+    command: >
+      --ingestor=hopr-network
+      --hopr-network-ids=${HOPR_NETWORK_IDS:-3}
+      --hopr-network-mode=${HOPR_NETWORK_MODE:-daily}
+      --hopr-database=${HOPR_DATABASE:-crawlers_data}

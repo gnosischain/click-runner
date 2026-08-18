@@ -19,6 +19,8 @@ from ingestors.cow_ingestor import CowIngestor
 from ingestors.snapshot_ingestor import SnapshotIngestor
 from ingestors.forum_ingestor import ForumIngestor
 from ingestors.external_prices_ingestor import ExternalPricesIngestor
+from ingestors.hopr_blokli_ingestor import HoprBlokliIngestor
+from ingestors.hopr_network_ingestor import HoprNetworkIngestor
 
 logger = logging.getLogger("clickhouse_runner")
 
@@ -124,7 +126,7 @@ def create_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--verify", default=os.getenv("CH_VERIFY", "True"), help="Verify TLS certificate")
     
     # Ingestor parameters
-    parser.add_argument("--ingestor", choices=["csv", "parquet", "gdrive", "query", "dune-execute-only", "mixpanel", "mixpanel-profiles", "cow", "snapshot", "forum", "external-prices"], default="query",
+    parser.add_argument("--ingestor", choices=["csv", "parquet", "gdrive", "query", "dune-execute-only", "mixpanel", "mixpanel-profiles", "cow", "snapshot", "forum", "external-prices", "hopr-blokli", "hopr-network"], default="query",
                        help="Type of ingestor to use")
     
     # CSV ingestor parameters
@@ -193,6 +195,24 @@ def create_argparser() -> argparse.ArgumentParser:
                        help="Max /latest.json pages to crawl (30 topics/page, default: 400)")
 
     # External prices (DefiLlama + CoinGecko) standbein
+    # HOPR ingestor parameters
+    parser.add_argument("--hopr-blokli-networks",
+                        default=os.getenv("HOPR_BLOKLI_NETWORKS", "jura"),
+                        help="Comma-separated Blokli networks (jura,rotsee). "
+                             "dufour has no Blokli endpoint.")
+    parser.add_argument("--hopr-network-ids",
+                        default=os.getenv("HOPR_NETWORK_IDS", "3"),
+                        help="Comma-separated network dashboard env ids (3=dufour). "
+                             "jura is absent from that dashboard by design.")
+    parser.add_argument("--hopr-network-mode", choices=["daily", "backfill"],
+                        default=os.getenv("HOPR_NETWORK_MODE", "daily"),
+                        help="Accepted for compatibility; both modes now do the same "
+                             "thing. The full hourly online-node history is pulled on "
+                             "every run, because it only ever advances when re-fetched.")
+    parser.add_argument("--hopr-database",
+                        default=os.getenv("HOPR_DATABASE", "crawlers_data"),
+                        help="Target database for HOPR tables (default: crawlers_data)")
+
     parser.add_argument("--external-prices-source", choices=["defillama", "coingecko", "both"],
                        default=os.getenv("EXTERNAL_PRICES_SOURCE", "both"),
                        help="Which external price API(s) to ingest")
@@ -617,6 +637,49 @@ def run_external_prices_ingestor(args, client, query_vars):
         return ingestor.ingest(skip_table_creation=args.skip_table_creation)
 
 
+def run_hopr_blokli_ingestor(args, client, query_variables):
+    """Snapshot HOPR v4 network + node state from Blokli's public GraphQL API."""
+    networks = [n.strip() for n in args.hopr_blokli_networks.split(",") if n.strip()]
+    db = args.hopr_database
+    # SQL templates use {{HOPR_DATABASE}} so the DDL and the insert target
+    # can never drift apart.
+    query_variables = {**query_variables, "HOPR_DATABASE": db}
+    network_table = f"{db}.hopr_blokli_network_snapshot"
+    nodes_table = f"{db}.hopr_blokli_nodes"
+    ingestor = HoprBlokliIngestor(
+        client=client,
+        variables=query_variables,
+        networks=networks,
+        network_table=network_table,
+        nodes_table=nodes_table,
+    )
+    obs.update_health(table_name=",".join([network_table, nodes_table]))
+    with obs.time_operation(obs.get_job_name(), "hopr-blokli", "ingest"):
+        return ingestor.ingest(skip_table_creation=args.skip_table_creation)
+
+
+def run_hopr_network_ingestor(args, client, query_variables):
+    """Snapshot dufour node availability/latency from HOPR's network dashboard."""
+    ids = [int(x.strip()) for x in args.hopr_network_ids.split(",") if x.strip()]
+    db = args.hopr_database
+    # SQL templates use {{HOPR_DATABASE}} so the DDL and the insert target
+    # can never drift apart.
+    query_variables = {**query_variables, "HOPR_DATABASE": db}
+    nodes_table = f"{db}.hopr_network_nodes"
+    online_table = f"{db}.hopr_network_online_hourly"
+    ingestor = HoprNetworkIngestor(
+        client=client,
+        variables=query_variables,
+        network_ids=ids,
+        mode=args.hopr_network_mode,
+        nodes_table=nodes_table,
+        online_table=online_table,
+    )
+    obs.update_health(table_name=",".join([nodes_table, online_table]))
+    with obs.time_operation(obs.get_job_name(), "hopr-network", "ingest"):
+        return ingestor.ingest(skip_table_creation=args.skip_table_creation)
+
+
 def main():
     """Main entry point"""
     obs.setup_logging()
@@ -684,6 +747,10 @@ def main():
             success = run_forum_ingestor(args, client, query_variables)
         elif args.ingestor == "external-prices":
             success = run_external_prices_ingestor(args, client, query_variables)
+        elif args.ingestor == "hopr-blokli":
+            success = run_hopr_blokli_ingestor(args, client, query_variables)
+        elif args.ingestor == "hopr-network":
+            success = run_hopr_network_ingestor(args, client, query_variables)
         elif args.ingestor == "dune-execute-only":
             success = run_dune_execute_only(args, client, query_variables)
         else:  # "query"
