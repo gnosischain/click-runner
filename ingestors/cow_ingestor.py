@@ -751,6 +751,11 @@ class CowIngestor(BaseIngestor):
 
                 if len(trades) == 0:
                     skipped_owners += 1
+                    # Still one API request: pace it. Skipped owners are ~95% of a
+                    # daily run, so without this sleep the delay bounded almost
+                    # nothing and the run went at whatever latency allowed
+                    # (~300 req/min measured 2026-09-11 with --cow-request-delay=0.25).
+                    time.sleep(self.rate_limit_delay)
                     continue
 
                 logger.info(
