@@ -178,6 +178,10 @@ def create_argparser() -> argparse.ArgumentParser:
                        help="Fully qualified table to read owner addresses from (e.g. dbt.int_execution_cow_trades)")
     parser.add_argument("--cow-max-pages", type=int, default=500,
                        help="Max API pages per owner (each page = 1000 trades, default: 500 = 500k trades)")
+    parser.add_argument("--cow-request-delay", type=float,
+                       default=float(os.environ["COW_REQUEST_DELAY"]) if os.getenv("COW_REQUEST_DELAY") else None,
+                       help="Seconds to sleep between CoW API requests (default: 0.1 with an API key, "
+                            "0.6 without). Raise it when the egress IP is shared with other CoW clients.")
 
     # Snapshot (governance) ingestor parameters
     parser.add_argument("--snapshot-mode", choices=["daily", "backfill"], default="daily",
@@ -533,6 +537,7 @@ def run_cow_ingestor(args, client, query_vars):
         backfill_from=args.cow_backfill_from or None,
         max_pages=args.cow_max_pages,
         api_key=api_key,
+        request_delay=args.cow_request_delay,
     )
 
     obs.update_health(table_name=table_name, source_table=source_table)

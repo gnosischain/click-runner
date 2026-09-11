@@ -1,3 +1,4 @@
+import collections
 import json
 import logging
 import time
@@ -21,6 +22,20 @@ MAX_RETRIES = 2
 # requests via curl_cffi impersonating a browser handshake is what gets served
 # the authenticated allowance. "chrome" tracks a recent Chrome build.
 IMPERSONATE_BROWSER = "chrome"
+# The same edge also enforces a per-source-IP rate rule and answers it with a 403
+# (CloudFront's "The request could not be satisfied" page), not a 429, and the
+# block lasts about an hour. Measured 2026-09-10: a shared egress address tripped
+# after roughly 2,000-3,500 requests inside a 5-13 minute burst. So 403 is a
+# throttle signal here, retried with a long backoff, and never a silent skip.
+THROTTLE_STATUSES = {403, 429}
+THROTTLE_BACKOFF_SECONDS = (10, 30, 60)
+MAX_THROTTLE_RETRIES = len(THROTTLE_BACKOFF_SECONDS)
+# Hard budget for this process, whatever the inter-request delay and latency:
+# never more than MAX_REQUESTS_PER_WINDOW requests in any REQUEST_WINDOW_SECONDS.
+# 1,200 per 5 min sits well under the observed trip point and leaves room for
+# other CoW clients that may share the egress address.
+MAX_REQUESTS_PER_WINDOW = 1200
+REQUEST_WINDOW_SECONDS = 300
 
 # Larger batches => far fewer parts => far less background-merge pressure,
 # which is what saturates memory on small ClickHouse nodes. 5k rows is a
@@ -69,6 +84,7 @@ class CowIngestor(BaseIngestor):
         backfill_from: Optional[str] = None,
         max_pages: Optional[int] = None,
         api_key: Optional[str] = None,
+        request_delay: Optional[float] = None,
     ):
         super().__init__(client, variables)
         # Optional CoW API key. When set, send it as the X-API-Key header (raises
@@ -79,7 +95,17 @@ class CowIngestor(BaseIngestor):
         # TLS fingerprint that actually get us past CoW's edge come from
         # curl_cffi's impersonation in _api_get (see IMPERSONATE_BROWSER).
         self.headers = {"X-API-Key": api_key} if api_key else {}
-        self.rate_limit_delay = AUTH_RATE_LIMIT_DELAY if api_key else RATE_LIMIT_DELAY
+        # Explicit --cow-request-delay wins; otherwise keyed vs keyless default.
+        if request_delay is not None:
+            self.rate_limit_delay = request_delay
+        else:
+            self.rate_limit_delay = AUTH_RATE_LIMIT_DELAY if api_key else RATE_LIMIT_DELAY
+        # Sliding-window request budget (see MAX_REQUESTS_PER_WINDOW).
+        self._request_times: "collections.deque[float]" = collections.deque()
+        self.requests_made = 0
+        # Owners given up on because the edge kept throttling; a non-zero count
+        # means the run is partial and must not report success.
+        self.throttle_exhausted = 0
         self.create_table_sql = create_table_sql
         self.table_name = table_name
         self.source_table = source_table
@@ -169,9 +195,57 @@ class CowIngestor(BaseIngestor):
         except Exception:
             return set()
 
+    def _wait_for_window(self) -> None:
+        """Block until this process is under MAX_REQUESTS_PER_WINDOW for the
+        trailing REQUEST_WINDOW_SECONDS. A fixed per-request sleep cannot bound
+        the rate when latency varies; this can."""
+        now = time.monotonic()
+        while self._request_times and now - self._request_times[0] > REQUEST_WINDOW_SECONDS:
+            self._request_times.popleft()
+        if len(self._request_times) >= MAX_REQUESTS_PER_WINDOW:
+            wait = REQUEST_WINDOW_SECONDS - (now - self._request_times[0])
+            if wait > 0:
+                logger.info(
+                    f"Request budget reached ({MAX_REQUESTS_PER_WINDOW}/{REQUEST_WINDOW_SECONDS}s), "
+                    f"waiting {wait:.0f}s",
+                    extra={
+                        "event": "cow_api_window_wait",
+                        "ingestor": "cow",
+                        "mode": self.mode,
+                        "wait_seconds": round(wait, 1),
+                    },
+                )
+                time.sleep(wait)
+            self._request_times.popleft()
+        self._request_times.append(time.monotonic())
+        self.requests_made += 1
+
+    @staticmethod
+    def _edge_fields(resp: curl_requests.Response) -> Dict[str, object]:
+        """The bits of a non-2xx response that tell an edge block apart from an
+        API error: status, CloudFront request id / cache header, body head."""
+        headers = resp.headers or {}
+        return {
+            "status_code": resp.status_code,
+            "x_amz_cf_id": headers.get("x-amz-cf-id"),
+            "x_cache": headers.get("x-cache"),
+            "retry_after": headers.get("retry-after"),
+            "body": (resp.text or "")[:200],
+        }
+
     def _api_get(self, url: str) -> Optional[curl_requests.Response]:
-        """GET with retry (up to MAX_RETRIES) and rate limit handling."""
-        for attempt in range(MAX_RETRIES + 1):
+        """GET with retry and throttle handling.
+
+        Transport errors: up to MAX_RETRIES retries, 3s apart.
+        403/429 (edge or API throttle): up to MAX_THROTTLE_RETRIES retries,
+        honouring Retry-After when present, else THROTTLE_BACKOFF_SECONDS.
+        Returns None when either budget is exhausted; the caller treats that as
+        api_failed, which feeds the consecutive-failure abort.
+        """
+        transport_attempt = 0
+        throttle_attempt = 0
+        while True:
+            self._wait_for_window()
             try:
                 with obs.time_operation(obs.get_job_name(), "cow", "api_get"):
                     resp = curl_requests.get(
@@ -180,55 +254,78 @@ class CowIngestor(BaseIngestor):
                         impersonate=IMPERSONATE_BROWSER,
                         timeout=30,
                     )
-                result = "success" if resp.status_code < 400 else "failure"
-                obs.cow_api_requests_total.labels(
-                    job=obs.get_job_name(),
-                    status_code=str(resp.status_code),
-                    result=result,
-                ).inc()
-                if resp.status_code == 429:
-                    logger.warning(
-                        "Rate limited, sleeping 10s...",
-                        extra={
-                            "event": "cow_api_rate_limited",
-                            "ingestor": "cow",
-                            "mode": self.mode,
-                            "status_code": resp.status_code,
-                            "attempt": attempt + 1,
-                        },
-                    )
-                    time.sleep(10)
-                    continue
-                return resp
             except curl_requests.RequestsError as e:
                 obs.cow_api_requests_total.labels(
                     job=obs.get_job_name(),
                     status_code="exception",
                     result="failure",
                 ).inc()
-                if attempt < MAX_RETRIES:
+                if transport_attempt < MAX_RETRIES:
+                    transport_attempt += 1
                     logger.warning(
-                        f"Retry {attempt + 1}/{MAX_RETRIES} for {url[:80]}... ({e})",
+                        f"Retry {transport_attempt}/{MAX_RETRIES} for {url[:80]}... ({e})",
                         extra={
                             "event": "cow_api_retry",
                             "ingestor": "cow",
                             "mode": self.mode,
-                            "attempt": attempt + 1,
+                            "attempt": transport_attempt,
                         },
                     )
                     time.sleep(3)
-                else:
-                    logger.error(
-                        f"Failed after {MAX_RETRIES} retries: {e}",
-                        extra={
-                            "event": "cow_api_failure",
-                            "ingestor": "cow",
-                            "mode": self.mode,
-                            "attempt": attempt + 1,
-                        },
-                    )
-                    return None
-        return None
+                    continue
+                logger.error(
+                    f"Failed after {MAX_RETRIES} retries: {e}",
+                    extra={
+                        "event": "cow_api_failure",
+                        "ingestor": "cow",
+                        "mode": self.mode,
+                        "attempt": transport_attempt + 1,
+                    },
+                )
+                return None
+
+            result = "success" if resp.status_code < 400 else "failure"
+            obs.cow_api_requests_total.labels(
+                job=obs.get_job_name(),
+                status_code=str(resp.status_code),
+                result=result,
+            ).inc()
+            if resp.status_code not in THROTTLE_STATUSES:
+                return resp
+
+            fields = self._edge_fields(resp)
+            if throttle_attempt >= MAX_THROTTLE_RETRIES:
+                self.throttle_exhausted += 1
+                logger.error(
+                    f"Throttled ({resp.status_code}) {MAX_THROTTLE_RETRIES + 1} times for {url[:80]}..., giving up",
+                    extra={
+                        "event": "cow_api_throttle_exhausted",
+                        "ingestor": "cow",
+                        "mode": self.mode,
+                        "attempt": throttle_attempt + 1,
+                        **fields,
+                    },
+                )
+                return None
+            retry_after = fields["retry_after"]
+            if isinstance(retry_after, str) and retry_after.isdigit():
+                delay = min(120, int(retry_after))
+            else:
+                delay = THROTTLE_BACKOFF_SECONDS[throttle_attempt]
+            logger.warning(
+                f"Throttled ({resp.status_code}), sleeping {delay}s "
+                f"(attempt {throttle_attempt + 1}/{MAX_THROTTLE_RETRIES})",
+                extra={
+                    "event": "cow_api_throttled",
+                    "ingestor": "cow",
+                    "mode": self.mode,
+                    "attempt": throttle_attempt + 1,
+                    "sleep_seconds": delay,
+                    **fields,
+                },
+            )
+            throttle_attempt += 1
+            time.sleep(delay)
 
     def _missing_fills_sql(self, select: str, group_by: str = "") -> str:
         """Anti-join of on-chain fills (source_table) against the target
@@ -307,6 +404,9 @@ class CowIngestor(BaseIngestor):
                 resp.raise_for_status()
                 trades = resp.json()
             except (curl_requests.RequestsError, ValueError) as e:
+                # Throttles never reach here (handled in _api_get); this is a
+                # real API/edge error, so keep the status, body and CloudFront
+                # ids that make it diagnosable, and count the owner as failed.
                 logger.error(
                     f"API error for owner {owner}: {e}",
                     extra={
@@ -314,8 +414,10 @@ class CowIngestor(BaseIngestor):
                         "ingestor": "cow",
                         "mode": self.mode,
                         "owner": owner,
+                        **self._edge_fields(resp),
                     },
                 )
+                api_failed = True
                 break
 
             if not trades:
@@ -547,7 +649,8 @@ class CowIngestor(BaseIngestor):
             total_trades += len(batch)
 
         logger.info(f"Per-owner repair phase done. Fills inserted: {total_trades}, failed owners: {failed_owners}")
-        return True
+        # A repair that could not fetch some owners has not repaired them.
+        return failed_owners == 0
 
     def ingest(self, skip_table_creation: bool = False, **kwargs) -> bool:
         """
@@ -685,6 +788,27 @@ class CowIngestor(BaseIngestor):
             logger.info(f"Owners skipped (all trades known): {skipped_owners}")
             logger.info(f"Failed owners: {failed_owners}")
             logger.info(f"Row count after: {count_after} (delta: {count_after - count_before})")
+            # One machine-readable line per run. failed_owners > 0 means the run is
+            # partial: the Job must exit non-zero so it is retried once the edge
+            # block clears, instead of reporting success over a sliver of the day.
+            logger.info(
+                f"CoW run summary: {len(owners)} owners, {total_trades} new trades, "
+                f"{skipped_owners} skipped, {failed_owners} failed, "
+                f"{self.requests_made} API requests, {self.throttle_exhausted} throttle give-ups",
+                extra={
+                    "event": "cow_run_summary",
+                    "ingestor": "cow",
+                    "mode": self.mode,
+                    "table": self.table_name,
+                    "owners_total": len(owners),
+                    "trades": total_trades,
+                    "owners_skipped": skipped_owners,
+                    "owners_failed": failed_owners,
+                    "api_requests": self.requests_made,
+                    "throttle_exhausted": self.throttle_exhausted,
+                    "partial": failed_owners > 0,
+                },
+            )
             obs.cow_owners_total.labels(
                 job=obs.get_job_name(),
                 mode=self.mode,
@@ -696,7 +820,7 @@ class CowIngestor(BaseIngestor):
                 result="failed",
             ).inc(failed_owners)
 
-            return True
+            return failed_owners == 0
 
         except Exception as e:
             logger.error(

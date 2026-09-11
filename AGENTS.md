@@ -28,8 +28,11 @@ file records how the repo actually works so sessions don't re-derive it.
 
 - `requests.Session` + hand-rolled retry loop (nobody uses urllib3.Retry):
   retry 5xx and transport errors with linear/exponential backoff; fail fast on
-  other 4xx; treat API-level error payloads as HARD failures — never coerce to
-  an empty result (an empty snapshot is indistinguishable from "no data").
+  other 4xx — EXCEPT a 403 with an HTML body from a CDN-fronted API, which is
+  an edge rate-limit and gets the same treatment as 429 (see lesson
+  edge-403-is-a-throttle); treat API-level error payloads as HARD failures —
+  never coerce to an empty result (an empty snapshot is indistinguishable from
+  "no data").
 - `INSERT_SETTINGS = {"optimize_on_insert": 0, "max_insert_threads": 1}`.
 - Idempotency via `ReplacingMergeTree(ingested_at)` with ORDER BY = the stated
   grain. Do NOT use MergeTree + post-insert ALTER DELETE prune
