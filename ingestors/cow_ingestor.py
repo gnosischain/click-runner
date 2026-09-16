@@ -12,10 +12,16 @@ from .base import BaseIngestor
 
 logger = logging.getLogger("clickhouse_runner")
 
-COW_API_BASE = "https://api.cow.fi/xdai/api/v2"
+# PARTNER GATEWAY, not the public api.cow.fi. The X-API-Key below is ONLY honoured
+# by partners.cow.fi; on the public host it is silently ignored and the request falls
+# under the public per-IP rule (~100 req/min) that CloudFront answers with a 403.
+# Verified 2026-09-16 from the cluster: api.cow.fi + key -> 403, partners.cow.fi
+# + key -> 200, partners.cow.fi WITHOUT key -> 401 (so the gateway really does
+# validate it). GET /api/v2/trades answers 200 there.
+COW_API_BASE = "https://partners.cow.fi/xdai/api/v2"
 PAGE_LIMIT = 1000
 RATE_LIMIT_DELAY = 0.6  # ~100 req/min (unauthenticated)
-AUTH_RATE_LIMIT_DELAY = 0.1  # ~10 RPS, safely under the ~30 RPS key allowance
+AUTH_RATE_LIMIT_DELAY = 0.1  # ~10 RPS, under the ~30 RPS key allowance (gateway only)
 MAX_RETRIES = 2
 # CoW's CloudFront edge rate-limits by TLS fingerprint (JA3): the python/urllib3
 # handshake is flagged as a bot and 429'd even with a valid X-API-Key. Issuing
