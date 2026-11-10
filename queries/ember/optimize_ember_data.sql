@@ -1,1 +1,1 @@
-OPTIMIZE TABLE crawlers_data.ember_electricity_data FINAL;
+OPTIMIZE TABLE crawlers_data.ember_generation_monthly FINAL;

@@ -11,3 +11,4 @@ diagnosing a data-quality symptom or changing an ingestor's write path.
 - [ddl-attributed-to-query-ingestor](ddl-attributed-to-query-ingestor.md) `observed` — all DDL metrics carry ingestor="query" regardless of caller
 - [cdn-requires-browser-ua](cdn-requires-browser-ua.md) `observed` — network.hoprnet.org's CDN serves error pages to non-browser user agents
 - [edge-403-is-a-throttle](edge-403-is-a-throttle.md) `enforced` — CoW's CloudFront edge rate-limits per source IP with a 403 (not 429); the cow ingestor used to skip the owner silently and exit 0
+- [full-reload-load-time-freshness](full-reload-load-time-freshness.md) `observed` — a full-reload table's load time advances even when the vendor file froze; Ember's froze at 2026-06 under a quiet load-time alert for 4+ months. Add a data-date freshness row

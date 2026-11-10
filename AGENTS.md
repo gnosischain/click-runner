@@ -36,7 +36,7 @@ what runs. Nothing deploys until a pin in the stack's `locals.tf` moves, and the
 | CoinGecko prices daily | as above with `--external-prices-source=coingecko` | `30 4 * * *` | `crawlers_data.coingecko_prices` |
 | HOPR Blokli daily | `--ingestor=hopr-blokli --hopr-blokli-networks=jura --hopr-database=hopr_db` | `45 4 * * *` | `hopr_db.hopr_blokli_network_snapshot`, `hopr_db.hopr_blokli_nodes` |
 | HOPR network daily | `--ingestor=hopr-network --hopr-network-ids=3 --hopr-network-mode=daily --hopr-database=hopr_db` | `0 5 * * *` | `hopr_db.hopr_network_nodes`, `hopr_db.hopr_network_online_hourly` |
-| Ember, twice a month | `--ingestor=csv --create-table-sql=queries/ember/create_ember_table.sql --insert-sql=queries/ember/insert_ember_data.sql --optimize-sql=queries/ember/optimize_ember_data.sql` | `0 0 8,21 * *` | `crawlers_data.ember_electricity_data` |
+| Ember, twice a month | `--ingestor=csv --create-table-sql=queries/ember/create_ember_table.sql --insert-sql=queries/ember/insert_ember_data.sql --optimize-sql=queries/ember/optimize_ember_data.sql` | `0 0 8,21 * *` | `crawlers_data.ember_generation_monthly` (since 2026-11; `ember_electricity_data` is frozen at data to 2026-06, its file retired 2026-11-02) |
 | Dune execute-only (created SUSPENDED) | `--ingestor=dune-execute-only` | `0 3 * * *`, never fires | nothing |
 | ProbeLab latest (created SUSPENDED) | bash wrapper: 13 × `--ingestor=parquet … --mode=latest` chained with `&&` | `0 3 * * *`, never fires | `crawlers_data.probelab_*` (13 tables) |
 
@@ -109,7 +109,8 @@ mixpanel, mixpanel-profiles and cow; run_queries.py:320,403,450,518); `COW_SOURC
 (default US, production EU; 163, stack `locals.tf:135`); `CH_MIXPANEL_STATE_SQL` (389); `HOPR_*` (203-218);
 `DUNE_EXECUTE_ONLY_QUERY_IDS` (150-154); `CH_QUERIES` (257,290,327,375,392,439); `CH_GDRIVE_FILE_ID` (319). SQL vars the
 production SQL needs: query mode (circles) needs `CH_QUERY_VAR_CIRCLES_BLACKLIST_URL` (queries/circles/blacklist/insert.sql:14);
-csv mode (Ember) needs `CH_QUERY_VAR_EMBER_DATA_URL` (queries/ember/insert_ember_data.sql:44).
+csv mode (Ember) needs `CH_QUERY_VAR_EMBER_DATA_URL` (queries/ember/insert_ember_data.sql:60), Ember's monthly generation file
+(`release_generation_monthly_global.csv`; the stack's ConfigMap holds the URL).
 
 | Invocation | What it does | Writes? | Safe beside the live writer? | Required args / env | Source |
 | --- | --- | --- | --- | --- | --- |
@@ -205,7 +206,9 @@ Local Compose services: these are `docker-compose.yml` service names, not cluste
 
 The ONE liveness query: data age per table divided by its SLA. Healthy is `rows > 0` AND `staleness_ratio < 1` on every
 row. SLAs: 30 h for daily crons (one missed run), 60 h for Dune-backed tables (Dune lands T-1/T-2, so one day
-behind is normal and three is a stall), 480 h for Ember (runs on the 8th and 21st). `rows = 0` is a failure, not a stale-read
+behind is normal and three is a stall), 480 h for Ember's load time (runs on the 8th and 21st) plus 2880 h (120 days) on the
+DATA date of Ember's World series: a full reload's load time advances even when the vendor's file froze, which hid a frozen
+Ember file for 4+ months (docs/lessons/full-reload-load-time-freshness.md). `rows = 0` is a failure, not a stale-read
 artefact: circles_blacklisted empties when the INSERT fails after the TRUNCATE (queries/circles/blacklist/truncate.sql:3,
 insert.sql:9-19); only a table whose cron has never run is legitimately empty. This is the `crawlers-data-stale` / `hopr-db-stale` rule SQL
 (the deployments repository's alerting stack, `alerts/click-runner.yaml:52-61,81-86`) plus `count()`.
@@ -217,7 +220,8 @@ FROM (
   UNION ALL SELECT 'dune_labels', toDateTime(max(introduced_at)), 60, count() FROM crawlers_data.dune_labels
   UNION ALL SELECT 'dune_prices', toDateTime(max(block_date)), 60, count() FROM crawlers_data.dune_prices
   UNION ALL SELECT 'dune_bridge_flows', toDateTime(max(timestamp)), 60, count() FROM crawlers_data.dune_bridge_flows
-  UNION ALL SELECT 'ember_electricity_data', max(version), 480, count() FROM crawlers_data.ember_electricity_data
+  UNION ALL SELECT 'ember_generation_monthly', toDateTime(max(ingested_at)), 480, count() FROM crawlers_data.ember_generation_monthly
+  UNION ALL SELECT 'ember_world_data_date', toDateTime(maxIf(Date, Area = 'World' AND `Electricity source` = 'Total generation')), 2880, count() FROM crawlers_data.ember_generation_monthly
   UNION ALL SELECT 'circles_blacklisted', toDateTime(max(ingested_at)), 30, count() FROM crawlers_data.circles_blacklisted
   UNION ALL SELECT 'defillama_prices', toDateTime(max(ingested_at)), 30, count() FROM crawlers_data.defillama_prices
   UNION ALL SELECT 'coingecko_prices', toDateTime(max(ingested_at)), 30, count() FROM crawlers_data.coingecko_prices
