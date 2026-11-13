@@ -7,7 +7,7 @@ even once the daily runs are green again. The topic stays in `forum_topics` with
 `bumped_at` and post count.
 
 **Cause:** daily mode re-fetches only topics with `bumped_at` above `max(bumped_at)` of
-`forum_topics` (ingestors/forum_ingestor.py:236,366-379). Topics are ingested in
+`forum_topics` (ingestors/forum_ingestor.py:242,378-391). Topics are ingested in
 `/latest.json` order, roughly newest-bumped first, and each topic row is inserted before
 the next topic is fetched. When a run crashes on topic N, the topics ingested before it
 have already raised the watermark. A topic bumped earlier that the crash skipped is now
