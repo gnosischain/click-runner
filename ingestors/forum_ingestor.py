@@ -60,6 +60,12 @@ USER_ACTION_LIKE_GIVEN = 1
 USER_ACTIONS_PAGE_SIZE = 30  # server-side page size for /user_actions.json
 LIKES_FLUSH_EVERY_USERS = 50  # write partial like-graph progress this often
 
+# Since 2026-10-27 Discourse answers HTTP 400 to anonymous /directory_items.json pages
+# above 10, so one sort order reaches only 550 of ~2,770 users. The likes_given walk adds
+# the likers the like graph needs (everyone with 4+ likes given on 2026-11-13).
+DIRECTORY_LAST_PAGE = 10
+DIRECTORY_ORDERS = ("post_count", "likes_given")
+
 
 def _int(value) -> int:
     try:
@@ -313,34 +319,40 @@ class ForumIngestor(BaseIngestor):
     # Users (bulk directory)
     # ------------------------------------------------------------------ #
     def _ingest_users(self) -> List[Tuple[str, int]]:
-        """Ingest the public user directory.
+        """Ingest the public user directory, one walk per DIRECTORY_ORDERS entry.
 
         Returns (username, likes_given) for every user seen, so the like-graph
         step can drive its crawl off the same pages instead of re-walking them.
         """
         columns = ["id", "username", "name", "trust_level", "likes_received",
                    "likes_given", "post_count", "topic_count", "days_visited", "raw_json"]
+        items_by_id: Dict[int, Dict] = {}  # the orders overlap; one row per user
+        total = None
+        for order in DIRECTORY_ORDERS:
+            page = 0
+            while page <= min(self.max_pages, DIRECTORY_LAST_PAGE):
+                data = self._get(
+                    "/directory_items.json", {"period": "all", "order": order, "page": page}
+                )
+                if data is None:
+                    break
+                total = (data.get("meta") or {}).get("total_rows_directory_items", total)
+                items = data.get("directory_items") or []
+                if not items:
+                    break
+                for item in items:
+                    items_by_id[_int((item.get("user") or {}).get("id"))] = item
+                page += 1
         rows = []
         seen: List[Tuple[str, int]] = []
-        page = 0
-        while page <= self.max_pages:
-            data = self._get(
-                "/directory_items.json", {"period": "all", "order": "post_count", "page": page}
-            )
-            if data is None:
-                break
-            items = data.get("directory_items") or []
-            if not items:
-                break
-            for item in items:
-                rows.append(self._user_row(item))
-                username = ((item.get("user") or {}).get("username")) or ""
-                if username:
-                    seen.append((username, _int(item.get("likes_given"))))
-            page += 1
+        for item in items_by_id.values():
+            rows.append(self._user_row(item))
+            username = ((item.get("user") or {}).get("username")) or ""
+            if username:
+                seen.append((username, _int(item.get("likes_given"))))
         if rows:
             self._batch_insert(self.users_table, rows, columns)
-            logger.info(f"Inserted {len(rows)} users")
+            logger.info(f"Inserted {len(rows)} users ({total} in the directory)")
         else:
             logger.warning("No users fetched from directory_items (non-fatal).")
         return seen
