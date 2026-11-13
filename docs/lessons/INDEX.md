@@ -12,3 +12,4 @@ diagnosing a data-quality symptom or changing an ingestor's write path.
 - [cdn-requires-browser-ua](cdn-requires-browser-ua.md) `observed` — network.hoprnet.org's CDN serves error pages to non-browser user agents
 - [edge-403-is-a-throttle](edge-403-is-a-throttle.md) `enforced` — CoW's CloudFront edge rate-limits per source IP with a 403 (not 429); the cow ingestor used to skip the owner silently and exit 0
 - [full-reload-load-time-freshness](full-reload-load-time-freshness.md) `observed` — a full-reload table's load time advances even when the vendor file froze; Ember's froze at 2026-06 under a quiet load-time alert for 4+ months. Add a data-date freshness row
+- [forum-watermark-skips-crashed-topics](forum-watermark-skips-crashed-topics.md) `observed` — a forum run that crashes part-way has already raised the max(bumped_at) watermark past the topics it skipped, so daily mode never re-fetches them. Re-ingest with `--forum-mode=backfill --forum-max-pages=<n>`

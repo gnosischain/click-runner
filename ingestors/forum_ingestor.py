@@ -536,7 +536,8 @@ class ForumIngestor(BaseIngestor):
             _int(data.get("views")),
             _int(data.get("like_count")),
             _int(data.get("participant_count")),
-            ",".join(data.get("tags") or []),
+            # Discourse returns tags as {"id", "name", "slug"} objects since 2026-10-27.
+            ",".join(t["name"] if isinstance(t, dict) else t for t in data.get("tags") or []),
             _dt(data.get("created_at")),
             _dt(data.get("last_posted_at")),
             _dt(
